@@ -1,0 +1,20 @@
+{
+  "name": "caido-httpql-colorizer-native",
+  "private": true,
+  "version": "1.0.1",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "caido-dev build",
+    "watch": "caido-dev watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@caido-community/dev": "latest",
+    "@caido/sdk-frontend": "latest",
+    "@caido/sdk-shared": "latest",
+    "@vitejs/plugin-vue": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vue": "latest"
+  }
+}

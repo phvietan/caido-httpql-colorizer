@@ -1,0 +1,11 @@
+{
+  "name": "httpql-colorizer-frontend",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@caido/sdk-frontend": "latest",
+    "shared": "workspace:*",
+    "vue": "latest"
+  }
+}

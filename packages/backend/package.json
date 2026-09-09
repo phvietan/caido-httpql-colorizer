@@ -1,0 +1,9 @@
+{
+  "name": "httpql-colorizer-backend",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "shared": "workspace:*"
+  }
+}
