@@ -206,6 +206,14 @@ To publish a new version:
 
 The release tag is read from the built Caido manifest, keeping the release version synchronized with `caido.config.ts`. The private key exists only inside the release runner and is deleted immediately after signing.
 
+For a one-command release from a clean worktree, use the included helper:
+
+```bash
+./release.sh "feat: describe the next release"
+```
+
+It builds the current package, increments the patch version in `package.json` and `caido.config.ts`, rebuilds and verifies the new manifest, commits the changes, pushes `main`, and starts the signed GitHub Actions release workflow. The helper requires the GitHub CLI to be authenticated and the repository's `PRIVATE_KEY` secret to be configured.
+
 ### Project structure
 
 ```text
