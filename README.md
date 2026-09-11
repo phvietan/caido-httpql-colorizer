@@ -2,7 +2,7 @@
 
 Color-code Caido HTTP History rows with ordered HTTPQL rules.
 
-HTTPQL Colorizer helps you visually separate interesting traffic—API hosts, error responses, authentication endpoints, static assets, or anything else HTTPQL can describe. It uses Caido's native request metadata, so colors appear directly in the HTTP History table without modifying Caido's DOM or injecting CSS.
+HTTPQL Colorizer helps you visually separate interesting traffic—API hosts, error responses, authentication endpoints, static assets, or anything else HTTPQL can describe. It uses Caido's request metadata, so colors appear directly in the HTTP History table without modifying Caido's DOM or injecting CSS.
 
 ## Features
 
@@ -38,7 +38,7 @@ Rules are evaluated in their displayed order and the first enabled matching rule
 - Reconcile colors in one pass instead of clearing every previously colored row first.
 - Clear colors only from rows previously owned by this plugin that no longer match a rule.
 
-### Native Caido integration
+### Caido integration
 
 - Color rows through Caido's request metadata API.
 - Evaluate newly intercepted traffic after its response is available, allowing `resp.*` filters to work.

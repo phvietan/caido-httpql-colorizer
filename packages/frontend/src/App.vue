@@ -22,7 +22,7 @@ const {
                 <div>
                     <h1>HTTPQL Colorizer</h1>
                     <p>
-                        Native Caido traffic-table highlighting. First matching
+                        Caido traffic-table highlighting. First matching
                         rule wins.
                     </p>
                 </div>
@@ -237,7 +237,7 @@ const {
                             <div>
                                 <label>Row background</label>
                                 <small
-                                    >32 presets for the native row background.
+                                    >32 presets for the row background.
                                     Caido keeps the row text white.</small
                                 >
                             </div>
@@ -295,7 +295,7 @@ const {
                             <input
                                 v-model="selectedRule.color"
                                 type="color"
-                                class="native-picker"
+                                class="color-picker"
                             />
                         </div>
                     </div>
@@ -1031,7 +1031,7 @@ input:checked + .switch::after {
         ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.native-picker {
+.color-picker {
     width: 34px;
     height: 34px;
     border: 1px solid #343d49;

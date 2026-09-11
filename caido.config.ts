@@ -3,21 +3,22 @@ import vue from "@vitejs/plugin-vue";
 import path from "node:path";
 
 export default defineConfig({
-  id: "httpql-colorizer-native",
+  id: "httpql-colorizer",
   name: "HTTPQL Colorizer",
-  description: "Native Caido HTTP History row coloring using ordered HTTPQL rules.",
-  version: "1.0.2",
+  description:
+    "Caido HTTP History row coloring using ordered HTTPQL rules.",
+  version: "1.0.3",
   author: {
     name: "phvietan",
     email: "phvietan@gmail.com",
-    url: "https://github.com/phvietan/caido-httpql-colorizer"
+    url: "https://github.com/phvietan/caido-httpql-colorizer",
   },
   plugins: [
     {
       kind: "backend",
       id: "httpql-colorizer-backend",
       name: "HTTPQL Colorizer Backend",
-      root: "packages/backend"
+      root: "packages/backend",
     },
     {
       kind: "frontend",
@@ -29,15 +30,18 @@ export default defineConfig({
         plugins: [vue()],
         resolve: {
           alias: [
-            { find: "@", replacement: path.resolve(__dirname, "packages/frontend/src") }
-          ]
+            {
+              find: "@",
+              replacement: path.resolve(__dirname, "packages/frontend/src"),
+            },
+          ],
         },
         build: {
           rollupOptions: {
-            external: ["@caido/frontend-sdk"]
-          }
-        }
-      }
-    }
-  ]
+            external: ["@caido/frontend-sdk"],
+          },
+        },
+      },
+    },
+  ],
 });

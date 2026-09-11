@@ -20,5 +20,5 @@ export async function init(sdk: SDK) {
   api.register("validateHttpql", validateHttpql);
   api.register("getBackendStatus", getBackendStatus);
   sdk.events.onInterceptResponse(onInterceptResponse);
-  sdk.console.log("[HTTPQL Colorizer] Native backend initialized.");
+  sdk.console.log("[HTTPQL Colorizer] Backend initialized.");
 }
