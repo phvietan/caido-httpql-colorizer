@@ -1,7 +1,21 @@
 {
   "name": "caido-httpql-colorizer-native",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
+  "description": "Color-code Caido HTTP History rows with ordered HTTPQL rules.",
+  "author": {
+    "name": "phvietan",
+    "email": "phvietan@gmail.com",
+    "url": "https://github.com/phvietan/caido-httpql-colorizer"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phvietan/caido-httpql-colorizer.git"
+  },
+  "homepage": "https://github.com/phvietan/caido-httpql-colorizer#readme",
+  "bugs": {
+    "url": "https://github.com/phvietan/caido-httpql-colorizer/issues"
+  },
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "build": "caido-dev build",

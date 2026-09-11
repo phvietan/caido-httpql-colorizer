@@ -6,8 +6,12 @@ export default defineConfig({
   id: "httpql-colorizer-native",
   name: "HTTPQL Colorizer",
   description: "Native Caido HTTP History row coloring using ordered HTTPQL rules.",
-  version: "1.0.1",
-  author: { name: "An Pham" },
+  version: "1.0.2",
+  author: {
+    name: "phvietan",
+    email: "phvietan@gmail.com",
+    url: "https://github.com/phvietan/caido-httpql-colorizer"
+  },
   plugins: [
     {
       kind: "backend",

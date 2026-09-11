@@ -9,7 +9,11 @@ import type {
   ValidationResult,
 } from "shared";
 import { mapWithConcurrency } from "shared";
-import { forgetAllOwned, ownedRequestIds, rememberColoredRequest } from "./db";
+import {
+  forgetColoredRequests,
+  ownedRequestIds,
+  rememberColoredRequest,
+} from "./db";
 
 const metadataQuery = `query getRequestMetadata($id: ID!) { request(id: $id) { metadata { id } } }`;
 const PAGE_SIZE = 500;
@@ -17,16 +21,56 @@ const MUTATION_BATCH_SIZE = 20;
 const MUTATION_CONCURRENCY = 10;
 
 type ColorUpdate = { requestId: string; metadataId: string; color: string };
-let settings: Settings = { enabled: true, rules: [] };
-let applyingExisting = false;
+type ColorAction = { requestId: string; color: string; ruleName?: string };
+type ColorFailure = { requestId: string; error: string };
+type ColorUpdateResult = { failures: ColorFailure[] };
+type ActionExecutionResult = ColorUpdateResult & {
+  skipped: string[];
+  successful: string[];
+};
+let settings: Settings = { enabled: true, groups: [], rules: [] };
+let settingsRevision = 0;
+let activeApply: Promise<ApplyResult> | null = null;
 let progress: ApplyProgress = { active: false, current: 0, total: 0, phase: "idle" };
 
-export async function setSettings(
-  sdk: SDK,
-  next: Settings,
-): Promise<ApplyResult> {
+export function setSettings(_sdk: SDK, next: Settings): void {
   settings = normalizeSettings(next);
-  return reapplyExistingHistory(sdk);
+  settingsRevision += 1;
+}
+
+export async function recolorize(sdk: SDK): Promise<ApplyResult> {
+  const snapshot: Settings = {
+    enabled: settings.enabled,
+    groups: settings.groups.map((group) => ({ ...group })),
+    rules: settings.rules.map((rule) => ({ ...rule })),
+  };
+  const revision = ++settingsRevision;
+
+  // Signal the active run through settingsRevision, then wait for its current
+  // in-flight request to settle before the latest run starts mutating colors.
+  const previousApply = activeApply;
+  if (previousApply) await previousApply.catch(() => undefined);
+  if (revision !== settingsRevision) return cancelledResult();
+
+  const run = reapplyExistingHistory(
+    sdk,
+    snapshot,
+    () => revision !== settingsRevision,
+  );
+  activeApply = run;
+  try {
+    return await run;
+  } finally {
+    if (activeApply === run) activeApply = null;
+  }
+}
+
+function cancelledResult(
+  cleared = 0,
+  errors: string[] = [],
+  colored = 0,
+): ApplyResult {
+  return { colored, cleared, errors: errors.slice(0, 20), cancelled: true };
 }
 
 export async function validateHttpql(
@@ -67,8 +111,8 @@ export async function onInterceptResponse(
     const requestId = String(request.getId());
     const metadataId = await getMetadataId(sdk, requestId);
     if (!metadataId) throw new Error(`Request ${requestId} does not have metadata.`);
-    const failures = await setRequestColors(sdk, [{ requestId, metadataId, color: match.color }]);
-    if (failures.length) throw new Error(failures[0]?.error ?? "Failed to set request color.");
+    const result = await setRequestColors(sdk, [{ requestId, metadataId, color: match.color }]);
+    if (result.failures.length) throw new Error(result.failures[0]?.error ?? "Failed to set request color.");
     await rememberColoredRequest(sdk, request.getId());
   } catch (error) {
     sdk.console.error(
@@ -79,8 +123,16 @@ export async function onInterceptResponse(
 }
 
 function normalizeSettings(input: Settings): Settings {
+  const groups = Array.isArray(input?.groups)
+    ? input.groups.map((group) => ({
+        id: String(group.id),
+        name: String(group.name ?? "Group"),
+      }))
+    : [];
+  const groupIds = new Set(groups.map((group) => group.id));
   return {
     enabled: Boolean(input?.enabled),
+    groups,
     rules: Array.isArray(input?.rules)
       ? input.rules.map((rule) => ({
           id: String(rule.id),
@@ -88,6 +140,9 @@ function normalizeSettings(input: Settings): Settings {
           httpql: String(rule.httpql ?? "").trim(),
           color: normalizeHex(rule.color),
           enabled: Boolean(rule.enabled),
+          groupId: rule.groupId && groupIds.has(String(rule.groupId))
+            ? String(rule.groupId)
+            : null,
         }))
       : [],
   };
@@ -131,16 +186,19 @@ async function getMetadataId(
   return result.data?.request?.metadata?.id ?? null;
 }
 
-async function setRequestColors(sdk: SDK, updates: ColorUpdate[]) {
+async function setRequestColors(
+  sdk: SDK,
+  updates: ColorUpdate[],
+): Promise<ColorUpdateResult> {
   const batches: ColorUpdate[][] = [];
   for (let start = 0; start < updates.length; start += MUTATION_BATCH_SIZE) {
     batches.push(updates.slice(start, start + MUTATION_BATCH_SIZE));
   }
 
-  const batchFailures = await mapWithConcurrency(
+  const batchResults = await mapWithConcurrency(
     batches,
     async (batch) => {
-      const failures: Array<{ requestId: string; error: string }> = [];
+      const failures: ColorFailure[] = [];
       const variables: Record<string, unknown> = {};
       const definitions = batch.map((update, index) => {
         variables[`metadataId${index}`] = update.metadataId;
@@ -165,123 +223,175 @@ async function setRequestColors(sdk: SDK, updates: ColorUpdate[]) {
     },
     MUTATION_CONCURRENCY,
   );
-  return batchFailures.flat();
+  return {
+    failures: batchResults.flat(),
+  };
 }
 
-async function clearOwnedColors(
+async function executeColorActions(
   sdk: SDK,
-): Promise<{ cleared: number; errors: string[] }> {
-  const errors: string[] = [];
-  let cleared = 0;
-  const updates: ColorUpdate[] = [];
-  for (const id of await ownedRequestIds(sdk)) {
-    try {
-      const metadataId = await getMetadataId(sdk, id);
-      if (!metadataId) throw new Error(`Request ${id} does not have metadata.`);
-      updates.push({ requestId: id, metadataId, color: "" });
-    } catch (error) {
-      errors.push(
-        `Could not clear ${id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+  actions: ColorAction[],
+  isCancelled: () => boolean,
+): Promise<ActionExecutionResult> {
+  const batches: ColorAction[][] = [];
+  for (let start = 0; start < actions.length; start += MUTATION_BATCH_SIZE) {
+    batches.push(actions.slice(start, start + MUTATION_BATCH_SIZE));
   }
-  const failures = await setRequestColors(sdk, updates);
-  cleared = updates.length - failures.length;
-  for (const failure of failures) {
-    errors.push(`Could not clear ${failure.requestId}: ${failure.error}`);
-  }
-  await forgetAllOwned(sdk);
-  return { cleared, errors };
+  const results = await mapWithConcurrency(
+    batches,
+    async (batch) => {
+      if (isCancelled()) {
+        return {
+          failures: [] as ColorFailure[],
+          skipped: batch.map((action) => action.requestId),
+          successful: [] as string[],
+        };
+      }
+      const resolved = await Promise.all(batch.map(async (action) => {
+        try {
+          const metadataId = await getMetadataId(sdk, action.requestId);
+          if (!metadataId)
+            throw new Error(`Request ${action.requestId} does not have metadata.`);
+          return {
+            update: { requestId: action.requestId, metadataId, color: action.color },
+          };
+        } catch (error) {
+          const prefix = action.ruleName ? `Rule "${action.ruleName}" / ` : "";
+          return {
+            failure: {
+              requestId: action.requestId,
+              error: `${prefix}request ${action.requestId}: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          };
+        }
+      }));
+      if (isCancelled()) {
+        return {
+          failures: [] as ColorFailure[],
+          skipped: batch.map((action) => action.requestId),
+          successful: [] as string[],
+        };
+      }
+      const updates = resolved.flatMap((item) => item.update ? [item.update] : []);
+      const metadataFailures = resolved.flatMap((item) => item.failure ? [item.failure] : []);
+      const updateResult = await setRequestColors(sdk, updates);
+      const failedIds = new Set(updateResult.failures.map((failure) => failure.requestId));
+      progress.current += batch.length;
+      return {
+        failures: [...metadataFailures, ...updateResult.failures],
+        skipped: [],
+        successful: updates
+          .filter((update) => !failedIds.has(update.requestId))
+          .map((update) => update.requestId),
+      };
+    },
+    MUTATION_CONCURRENCY,
+  );
+  return {
+    failures: results.flatMap((result) => result.failures),
+    skipped: results.flatMap((result) => result.skipped),
+    successful: results.flatMap((result) => result.successful),
+  };
 }
 
-async function reapplyExistingHistory(sdk: SDK): Promise<ApplyResult> {
-  if (applyingExisting)
-    return {
-      colored: 0,
-      cleared: 0,
-      errors: ["A history re-apply is already running."],
-    };
-  applyingExisting = true;
-  progress = { active: true, current: 0, total: 0, phase: "clearing" };
+async function reconcileOwnership(
+  sdk: SDK,
+  desiredIds: Set<string>,
+  staleIds: Set<string>,
+  successfulIds: Set<string>,
+): Promise<string[]> {
+  const errors: string[] = [];
+  await forgetColoredRequests(
+    sdk,
+    [...staleIds].filter((id) => successfulIds.has(id)),
+  );
+  const coloredIds = [...desiredIds].filter((id) => successfulIds.has(id));
+  const results = await mapWithConcurrency(
+    coloredIds,
+    async (id) => {
+      try {
+        await rememberColoredRequest(sdk, id);
+        return null;
+      } catch (error) {
+        return `Request ${id}: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+    MUTATION_CONCURRENCY,
+  );
+  for (const error of results) {
+    if (error) errors.push(error);
+  }
+  return errors;
+}
+
+async function reapplyExistingHistory(
+  sdk: SDK,
+  snapshot: Settings,
+  isCancelled: () => boolean,
+): Promise<ApplyResult> {
+  progress = { active: true, current: 0, total: 0, phase: "finding" };
   try {
-    const clearResult = await clearOwnedColors(sdk);
-    if (!settings.enabled)
-      return {
-        colored: 0,
-        cleared: clearResult.cleared,
-        errors: clearResult.errors,
-      };
-    progress = { active: true, current: 0, total: 0, phase: "finding" };
-    const claimed = new Set<string>();
-    const pending: Array<{ requestId: string; rule: ColorRule }> = [];
-    const errors = [...clearResult.errors];
-    let colored = 0;
-    for (const rule of settings.rules) {
-      if (!rule.enabled || !rule.httpql) continue;
-      let cursor: string | null = null;
-      while (true) {
-        try {
-          let query = sdk.requests
-            .query()
-            .filter(rule.httpql)
-            .ascending("req", "created_at")
-            .first(PAGE_SIZE);
-          if (cursor) query = query.after(cursor);
-          const page = await query.execute();
-          for (const item of page.items) {
-            const id = String(item.request.getId());
-            if (claimed.has(id)) continue;
-            claimed.add(id);
-            pending.push({ requestId: id, rule });
-          }
-          if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) break;
-          cursor = page.pageInfo.endCursor;
-        } catch (error) {
-          errors.push(
-            `Rule "${rule.name}": ${error instanceof Error ? error.message : String(error)}`,
-          );
-          break;
-        }
-      }
-    }
-    progress = { active: true, current: 0, total: pending.length, phase: "applying" };
-    for (let start = 0; start < pending.length; start += MUTATION_BATCH_SIZE) {
-      const pendingBatch = pending.slice(start, start + MUTATION_BATCH_SIZE);
-      const updates: ColorUpdate[] = [];
-      for (const item of pendingBatch) {
-        try {
-          const metadataId = await getMetadataId(sdk, item.requestId);
-          if (!metadataId) throw new Error(`Request ${item.requestId} does not have metadata.`);
-          updates.push({ requestId: item.requestId, metadataId, color: item.rule.color });
-        } catch (error) {
-          errors.push(`Rule "${item.rule.name}" / request ${item.requestId}: ${error instanceof Error ? error.message : String(error)}`);
-          progress.current += 1;
-        }
-      }
-      const failures = await setRequestColors(sdk, updates);
-      const failedIds = new Set(failures.map((failure) => failure.requestId));
-      for (const update of updates) {
-        if (!failedIds.has(update.requestId)) {
+    const ownedIds = new Set(await ownedRequestIds(sdk));
+    if (isCancelled()) return cancelledResult();
+    const desired = new Map<string, ColorAction>();
+    const errors: string[] = [];
+    if (snapshot.enabled) {
+      for (const rule of snapshot.rules) {
+        if (!rule.enabled || !rule.httpql) continue;
+        let cursor: string | null = null;
+        while (true) {
           try {
-            await rememberColoredRequest(sdk, update.requestId);
-            colored += 1;
+            let query = sdk.requests
+              .query()
+              .filter(rule.httpql)
+              // Caido displays the newest history entries at the top. Query in
+              // the same order so visible rows are recolored from top to bottom.
+              .descending("req", "created_at")
+              .first(PAGE_SIZE);
+            if (cursor) query = query.after(cursor);
+            const page = await query.execute();
+            if (isCancelled()) return cancelledResult(0, errors);
+            for (const item of page.items) {
+              const requestId = String(item.request.getId());
+              if (!desired.has(requestId)) {
+                desired.set(requestId, {
+                  requestId,
+                  color: rule.color,
+                  ruleName: rule.name,
+                });
+              }
+            }
+            if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) break;
+            cursor = page.pageInfo.endCursor;
           } catch (error) {
-            errors.push(`Request ${update.requestId}: ${error instanceof Error ? error.message : String(error)}`);
+            errors.push(
+              `Rule "${rule.name}": ${error instanceof Error ? error.message : String(error)}`,
+            );
+            break;
           }
         }
-        progress.current += 1;
-      }
-      for (const failure of failures) {
-        errors.push(`Request ${failure.requestId}: ${failure.error}`);
       }
     }
+    const desiredIds = new Set(desired.keys());
+    const staleIds = new Set([...ownedIds].filter((id) => !desiredIds.has(id)));
+    const actions: ColorAction[] = [
+      ...desired.values(),
+      ...[...staleIds].map((requestId) => ({ requestId, color: "" })),
+    ];
+    progress = { active: true, current: 0, total: actions.length, phase: "applying" };
+    const actionResult = await executeColorActions(sdk, actions, isCancelled);
+    const successfulIds = new Set(actionResult.successful);
+    errors.push(...actionResult.failures.map((failure) => failure.error));
+    errors.push(...await reconcileOwnership(sdk, desiredIds, staleIds, successfulIds));
+    const colored = [...desiredIds].filter((id) => successfulIds.has(id)).length;
+    const cleared = [...staleIds].filter((id) => successfulIds.has(id)).length;
+    if (isCancelled()) return cancelledResult(cleared, errors, colored);
     return {
       colored,
-      cleared: clearResult.cleared,
+      cleared,
       errors: errors.slice(0, 20),
     };
   } finally {
-    applyingExisting = false;
     progress = { active: false, current: progress.total, total: progress.total, phase: "idle" };
   }
 }

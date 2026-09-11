@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Build, sign, and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Verify main branch
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_name }}" != "main" ]]; then
+            echo "Release can only be run from the main branch."
+            exit 1
+          fi
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build plugin package
+        run: pnpm run build
+
+      - name: Sign plugin package
+        working-directory: dist
+        shell: bash
+        env:
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+        run: |
+          if [[ -z "$PRIVATE_KEY" ]]; then
+            echo "The PRIVATE_KEY GitHub Actions secret is required."
+            exit 1
+          fi
+
+          umask 077
+          trap 'rm -f private_key.pem' EXIT
+          printf '%s\n' "$PRIVATE_KEY" > private_key.pem
+          openssl pkeyutl +            -sign +            -inkey private_key.pem +            -out plugin_package.zip.sig +            -rawin +            -in plugin_package.zip
+
+      - name: Read package version
+        id: metadata
+        working-directory: dist
+        shell: bash
+        run: |
+          VERSION="$(unzip -p plugin_package.zip manifest.json | jq -r .version)"
+
+          if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+            echo "Unable to read a version from the built manifest."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create immutable release
+        uses: caido/action-release@v1
+        with:
+          tag: ${{ steps.metadata.outputs.version }}
+          commit: ${{ github.sha }}
+          name: HTTPQL Colorizer ${{ steps.metadata.outputs.version }}
+          body: Release ${{ steps.metadata.outputs.version }}
+          artifacts: dist/plugin_package.zip,dist/plugin_package.zip.sig
+          artifactErrorsFailBuild: true
+          immutableCreate: true

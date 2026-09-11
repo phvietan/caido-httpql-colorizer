@@ -31,9 +31,17 @@ export async function ownedRequestIds(sdk: SDK): Promise<string[]> {
   return rows.map((row) => String(row.request_id));
 }
 
-export async function forgetAllOwned(sdk: SDK): Promise<void> {
+export async function forgetColoredRequests(
+  sdk: SDK,
+  requestIds: readonly string[],
+): Promise<void> {
+  if (requestIds.length === 0) return;
   await ensureDatabase(sdk);
   const db = await sdk.meta.db();
-  const statement = await db.prepare(`DELETE FROM ${TABLE}`);
-  await statement.run();
+  const statement = await db.prepare(
+    `DELETE FROM ${TABLE} WHERE request_id = ?`,
+  );
+  for (const requestId of requestIds) {
+    await statement.run(String(requestId));
+  }
 }

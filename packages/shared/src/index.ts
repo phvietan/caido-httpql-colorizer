@@ -6,10 +6,17 @@ export type ColorRule = {
   httpql: string;
   color: string;
   enabled: boolean;
+  groupId: string | null;
+};
+
+export type RuleGroup = {
+  id: string;
+  name: string;
 };
 
 export type Settings = {
   enabled: boolean;
+  groups: RuleGroup[];
   rules: ColorRule[];
 };
 
@@ -21,6 +28,7 @@ export type ApplyResult = {
   colored: number;
   cleared: number;
   errors: string[];
+  cancelled?: boolean;
 };
 
 export type ApplyProgress = {
@@ -31,7 +39,8 @@ export type ApplyProgress = {
 };
 
 export type API = {
-  setSettings(settings: Settings): Promise<ApplyResult>;
+  setSettings(settings: Settings): void;
+  recolorize(): Promise<ApplyResult>;
   validateHttpql(query: string): Promise<ValidationResult>;
   getBackendStatus(): Promise<{
     initialized: boolean;

@@ -6,6 +6,7 @@ import { ensureDatabase } from "./db";
 import {
   getBackendStatus,
   onInterceptResponse,
+  recolorize,
   setSettings,
   validateHttpql,
 } from "./rpc";
@@ -15,6 +16,7 @@ export async function init(sdk: SDK) {
 
   await ensureDatabase(sdk);
   api.register("setSettings", setSettings);
+  api.register("recolorize", recolorize);
   api.register("validateHttpql", validateHttpql);
   api.register("getBackendStatus", getBackendStatus);
   sdk.events.onInterceptResponse(onInterceptResponse);
