@@ -45,6 +45,7 @@ export type API = {
   getBackendStatus(): Promise<{
     initialized: boolean;
     enabled: boolean;
+    projectId: string | null;
     ruleCount: number;
     progress: ApplyProgress;
   }>;

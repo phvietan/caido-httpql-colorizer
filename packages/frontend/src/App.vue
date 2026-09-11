@@ -1,16 +1,45 @@
 <script setup lang="ts">
 import { COLOR_PRESETS } from "./colors";
+import BackgroundStatus from "./components/BackgroundStatus.vue";
+import ProgressStatus from "./components/ProgressStatus.vue";
+import RulesPanel from "./components/RulesPanel.vue";
+import RuleCard from "./components/RuleCard.vue";
 import { useColorizer } from "./useColorizer";
 
 const {
-    settings, selectedId, recoloringRuleNames, statusText, validation,
-    selectedRule, ruleSections, progress, progressPercent, draggedRuleId,
-    draggedGroupId, dropTargetRuleId, dropTargetGroupId, dropPosition,
-    groupOrderTargetId, groupDropPosition, newRule, newGroup,
-    removeRule, groupAllEnabled, toggleGroup, startRuleDrag,
-    updateRuleDropTarget, updateSectionDropTarget, finishRuleDrag, dropRule,
-    handleSectionDrop, startGroupDrag, finishGroupDrag, validate, selectPreset,
-    saveSettings, triggerColorizing,
+    settings,
+    selectedId,
+    recoloringRuleNames,
+    statusText,
+    validation,
+    selectedRule,
+    ruleSections,
+    progress,
+    progressPercent,
+    draggedRuleId,
+    draggedGroupId,
+    dropTargetRuleId,
+    dropTargetGroupId,
+    dropPosition,
+    groupOrderTargetId,
+    groupDropPosition,
+    newRule,
+    newGroup,
+    removeRule,
+    groupAllEnabled,
+    toggleGroup,
+    startRuleDrag,
+    updateRuleDropTarget,
+    updateSectionDropTarget,
+    finishRuleDrag,
+    dropRule,
+    handleSectionDrop,
+    startGroupDrag,
+    finishGroupDrag,
+    validate,
+    selectPreset,
+    saveSettings,
+    triggerColorizing,
 } = useColorizer();
 </script>
 
@@ -22,178 +51,50 @@ const {
                 <div>
                     <h1>HTTPQL Colorizer</h1>
                     <p>
-                        Caido traffic-table highlighting. First matching
-                        rule wins.
+                        Caido traffic-table highlighting. First matching rule
+                        wins.
                     </p>
                 </div>
             </div>
 
             <div class="top-actions">
-                <div
-                    v-if="recoloringRuleNames.length > 0"
-                    class="background-status"
-                    :title="`${recoloringRuleNames.join(', ')} is recoloring in background`"
-                >
-                    <span class="dot"></span>
-                    {{ recoloringRuleNames.join(", ") }} is recoloring in
-                    background
-                </div>
+                <BackgroundStatus :rule-names="recoloringRuleNames" />
             </div>
         </header>
 
         <main class="workspace">
-            <aside class="rules-panel panel">
-                <div class="panel-title">
-                    <div>
-                        <strong>Rules</strong>
-                        <span class="count">{{ settings.rules.length }}</span>
-                    </div>
-                    <div class="rule-list-actions">
-                        <button class="btn compact" @click="newGroup">
-                            + Group
-                        </button>
-                        <button class="btn primary compact" @click="newRule">
-                            + New rule
-                        </button>
-                    </div>
-                </div>
-
-                <div class="rule-list">
-                    <section
-                        v-for="section in ruleSections"
-                        :key="section.id ?? 'ungrouped'"
-                        class="rule-group"
-                        :class="{
-                            'drop-group': dropTargetGroupId === section.id,
-                            'dragging-group': draggedGroupId === section.id,
-                            'group-drop-before':
-                                groupOrderTargetId === section.id &&
-                                groupDropPosition === 'before',
-                            'group-drop-after':
-                                groupOrderTargetId === section.id &&
-                                groupDropPosition === 'after',
-                        }"
-                        @dragover.prevent="
-                            updateSectionDropTarget(section.id, $event)
-                        "
-                        @drop.prevent="handleSectionDrop(section.id)"
-                    >
-                        <div v-if="section.group" class="group-header">
-                            <span
-                                class="group-drag-handle"
-                                title="Drag to reorder group"
-                                draggable="true"
-                                @dragstart.stop="
-                                    startGroupDrag(section.group.id, $event)
-                                "
-                                @dragend="finishGroupDrag"
-                                >⠿</span
-                            >
-                            <input
-                                v-model="section.group.name"
-                                class="group-name"
-                                @change="saveSettings"
-                            />
-                            <span>{{ section.rules.length }} rules</span>
-                            <button
-                                class="group-toggle"
-                                @click="toggleGroup(section.group.id)"
-                            >
-                                {{
-                                    groupAllEnabled(section.group.id)
-                                        ? "Disable all"
-                                        : "Enable all"
-                                }}
-                            </button>
-                        </div>
-                        <div
-                            v-else-if="section.name"
-                            class="group-header ungrouped"
-                        >
-                            <strong>{{ section.name }}</strong>
-                        </div>
-
-                        <div
-                            v-for="rule in section.rules"
-                            :key="rule.id"
-                            class="rule-card"
-                            role="button"
-                            tabindex="0"
-                            draggable="true"
-                            :class="{
-                                selected: selectedId === rule.id,
-                                disabled: !rule.enabled,
-                                dragging: draggedRuleId === rule.id,
-                                'drop-before':
-                                    dropTargetRuleId === rule.id &&
-                                    dropPosition === 'before',
-                                'drop-after':
-                                    dropTargetRuleId === rule.id &&
-                                    dropPosition === 'after',
-                            }"
-                            @dragstart="startRuleDrag(rule.id, $event)"
-                            @dragover.prevent.stop="
-                                updateRuleDropTarget(rule.id, $event)
-                            "
-                            @drop.prevent.stop="dropRule(rule.id)"
-                            @dragend="finishRuleDrag"
-                            @click="
-                                selectedId = rule.id;
-                                validation = null;
-                            "
-                            @keydown.enter="selectedId = rule.id"
-                        >
-                            <span
-                                class="accent"
-                                :style="{ background: rule.color }"
-                            ></span>
-                            <span class="rule-copy">
-                                <strong>{{ rule.name }}</strong>
-                                <small>{{
-                                    rule.httpql || "No HTTPQL expression"
-                                }}</small>
-                            </span>
-                            <label
-                                class="rule-toggle"
-                                title="Enable or disable rule"
-                                @click.stop
-                            >
-                                <input
-                                    v-model="rule.enabled"
-                                    type="checkbox"
-                                    @change="saveSettings"
-                                />
-                                <span class="switch"></span>
-                            </label>
-                            <span class="drag-handle" title="Drag to reorder"
-                                >⠿</span
-                            >
-                        </div>
-
-                        <div
-                            v-if="
-                                section.rules.length === 0 &&
-                                (section.group || settings.groups.length > 0)
-                            "
-                            class="group-empty"
-                        >
-                            Drop rules here
-                        </div>
-                    </section>
-
-                    <div v-if="settings.rules.length === 0" class="empty">
-                        No rules yet. Create one to get started.
-                    </div>
-                </div>
-
-                <div class="priority-note">
-                    <strong>Priority matters.</strong>
-                    <span
-                        >Drag rules into order. Changes are saved but do not
-                        recolor automatically.</span
-                    >
-                </div>
-            </aside>
+            <RulesPanel
+                :rules="settings.rules"
+                :groups="settings.groups"
+                :sections="ruleSections"
+                :selected-id="selectedId"
+                :dragged-rule-id="draggedRuleId"
+                :dragged-group-id="draggedGroupId"
+                :drop-target-rule-id="dropTargetRuleId"
+                :drop-target-group-id="dropTargetGroupId"
+                :drop-position="dropPosition"
+                :group-order-target-id="groupOrderTargetId"
+                :group-drop-position="groupDropPosition"
+                :group-all-enabled="groupAllEnabled"
+                @new-rule="newRule"
+                @new-group="newGroup"
+                @select="
+                    (id) => {
+                        selectedId = id;
+                        validation = null;
+                    }
+                "
+                @save="saveSettings"
+                @toggle-group="toggleGroup"
+                @rule-drag-start="startRuleDrag"
+                @rule-drag-over="updateRuleDropTarget"
+                @rule-drop="dropRule"
+                @rule-drag-end="finishRuleDrag"
+                @section-drag-over="updateSectionDropTarget"
+                @section-drop="handleSectionDrop"
+                @group-drag-start="startGroupDrag"
+                @group-drag-end="finishGroupDrag"
+            />
 
             <section v-if="selectedRule" class="editor panel">
                 <div class="editor-scroll">
@@ -237,8 +138,8 @@ const {
                             <div>
                                 <label>Row background</label>
                                 <small
-                                    >32 presets for the row background.
-                                    Caido keeps the row text white.</small
+                                    >32 presets for the row background. Caido
+                                    keeps the row text white.</small
                                 >
                             </div>
 
@@ -299,24 +200,17 @@ const {
                             />
                         </div>
                     </div>
-
                 </div>
 
                 <div class="editor-footer">
                     <div class="footer-status">
                         <span>{{ statusText }}</span>
-                        <div v-if="progress.active" class="progress-status">
-                            <div class="progress-track">
-                                <div
-                                    class="progress-fill"
-                                    :style="{ width: `${progressPercent}%` }"
-                                ></div>
-                            </div>
-                            <small
-                                >{{ progress.current }} /
-                                {{ progress.total }}</small
-                            >
-                        </div>
+                        <ProgressStatus
+                            :active="progress.active"
+                            :current="progress.current"
+                            :total="progress.total"
+                            :percent="progressPercent"
+                        />
                         <div class="footer-actions">
                             <button class="btn danger" @click="removeRule">
                                 Delete
@@ -355,835 +249,4 @@ const {
     </div>
 </template>
 
-<style scoped>
-* {
-    box-sizing: border-box;
-}
-
-.page {
-    height: 100%;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: var(--c-bg-default, #111418);
-    color: var(--c-fg-default, #e6e8eb);
-    font:
-        12px/1.35 Inter,
-        ui-sans-serif,
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        sans-serif;
-}
-
-.topbar {
-    flex: 0 0 auto;
-    min-height: 74px;
-    padding: 14px 18px;
-    border-bottom: 1px solid #2a3038;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    background: #101419;
-}
-
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-}
-
-.brand-icon {
-    font-size: 29px;
-}
-
-h1 {
-    font-size: 16px;
-    margin: 0 0 3px;
-    font-weight: 700;
-}
-
-.brand p {
-    margin: 0;
-    color: #9199a5;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.top-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.rule-toggle {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    cursor: pointer;
-}
-
-.rule-toggle input {
-    display: none;
-}
-
-.switch {
-    width: 31px;
-    height: 17px;
-    border-radius: 999px;
-    position: relative;
-    background: #3a414b;
-    box-shadow: inset 0 0 0 1px #49515c;
-    flex: none;
-}
-
-.switch::after {
-    content: "";
-    width: 13px;
-    height: 13px;
-    border-radius: 50%;
-    background: #c3c8cf;
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    transition:
-        transform 0.15s ease,
-        background 0.15s ease;
-}
-
-input:checked + .switch {
-    background: #17663e;
-    box-shadow: inset 0 0 0 1px #25895a;
-}
-
-input:checked + .switch::after {
-    transform: translateX(14px);
-    background: #86efac;
-}
-
-.background-status {
-    max-width: 360px;
-    color: #929ba7;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.background-status .dot {
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    margin-right: 6px;
-    background: #4f9cf9;
-    box-shadow: 0 0 8px rgba(79, 156, 249, 0.4);
-}
-
-.progress-status {
-    width: min(260px, 35vw);
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    color: #aeb6c1;
-    font-size: 10px;
-}
-
-.progress-track {
-    flex: 1;
-    height: 6px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: #2b323c;
-}
-
-.progress-fill {
-    height: 100%;
-    border-radius: inherit;
-    background: #4f9cf9;
-    transition: width 0.2s ease;
-}
-
-.workspace {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-    display: grid;
-    grid-template-columns: minmax(245px, 320px) minmax(0, 1fr);
-    gap: 12px;
-    padding: 12px;
-}
-
-.panel {
-    min-height: 0;
-    border: 1px solid #2b323c;
-    border-radius: 9px;
-    background: #161b21;
-    overflow: hidden;
-}
-
-.rules-panel {
-    display: flex;
-    flex-direction: column;
-}
-
-.panel-title {
-    height: 51px;
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 13px;
-    border-bottom: 1px solid #29303a;
-}
-
-.panel-title strong {
-    font-size: 12px;
-}
-
-.panel-title small {
-    font-size: 8px;
-    letter-spacing: 0.14em;
-    color: #6f7885;
-    font-weight: 700;
-}
-
-.rule-list-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.btn.compact {
-    height: 27px;
-    padding: 0 8px;
-}
-
-.count {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-left: 6px;
-    width: 20px;
-    height: 18px;
-    border-radius: 999px;
-    background: #252c35;
-    color: #aab2bd;
-    font-size: 9px;
-}
-
-.rule-list {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 9px;
-}
-
-.rule-group {
-    position: relative;
-    margin-bottom: 9px;
-    padding: 5px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    transition:
-        border-color 0.12s ease,
-        background 0.12s ease;
-}
-
-.rule-group.drop-group {
-    border-color: #4f9cf9;
-    background: rgba(79, 156, 249, 0.08);
-}
-
-.rule-group.dragging-group {
-    opacity: 0.4;
-}
-
-.rule-group.group-drop-before::before,
-.rule-group.group-drop-after::after {
-    content: "";
-    position: absolute;
-    z-index: 3;
-    left: 0;
-    right: 0;
-    height: 3px;
-    border-radius: 999px;
-    background: #4f9cf9;
-    box-shadow: 0 0 7px rgba(79, 156, 249, 0.7);
-}
-
-.rule-group.group-drop-before::before {
-    top: -5px;
-}
-
-.rule-group.group-drop-after::after {
-    bottom: -5px;
-}
-
-.group-header {
-    min-height: 31px;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 5px;
-    padding: 0 5px;
-    color: #77818d;
-    font-size: 9px;
-}
-
-.group-drag-handle {
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 25px;
-    color: #8b96a3;
-    font-size: 21px;
-    line-height: 1;
-    cursor: grab;
-    user-select: none;
-}
-
-.group-drag-handle:hover {
-    color: #c4cbd4;
-}
-
-.group-header.ungrouped {
-    grid-template-columns: 1fr;
-    min-height: 25px;
-    color: #929ca8;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-
-.group-name {
-    min-width: 0;
-    border: 0;
-    border-bottom: 1px solid transparent;
-    outline: none;
-    background: transparent;
-    color: #d5dae1;
-    font: inherit;
-    font-size: 11px;
-    font-weight: 700;
-}
-
-.group-name:focus {
-    border-bottom-color: #4f9cf9;
-}
-
-.group-toggle {
-    height: 23px;
-    padding: 0 7px;
-    border: 1px solid #39434f;
-    border-radius: 5px;
-    background: #20262e;
-    color: #aab3bf;
-    font-size: 9px;
-    cursor: pointer;
-}
-
-.group-toggle:hover {
-    background: #29313b;
-}
-
-.group-empty {
-    display: grid;
-    place-items: center;
-    min-height: 40px;
-    border: 1px dashed #313a45;
-    border-radius: 6px;
-    color: #626d79;
-    font-size: 9px;
-}
-
-.rule-card {
-    width: 100%;
-    height: 58px;
-    position: relative;
-    display: grid;
-    grid-template-columns: 4px minmax(0, 1fr) auto auto;
-    gap: 10px;
-    align-items: stretch;
-    margin-bottom: 7px;
-    padding: 0 10px 0 0;
-    border: 1px solid #323a45;
-    border-radius: 7px;
-    background: #20262e;
-    color: inherit;
-    text-align: left;
-    cursor: pointer;
-}
-
-.rule-card.dragging {
-    opacity: 0.35;
-    cursor: grabbing;
-}
-
-.rule-card.drop-before::before,
-.rule-card.drop-after::after {
-    content: "";
-    position: absolute;
-    z-index: 2;
-    left: 0;
-    right: 0;
-    height: 2px;
-    border-radius: 999px;
-    background: #4f9cf9;
-    box-shadow: 0 0 6px rgba(79, 156, 249, 0.65);
-}
-
-.rule-card.drop-before::before {
-    top: -5px;
-}
-
-.rule-card.drop-after::after {
-    bottom: -5px;
-}
-
-.rule-card:hover {
-    background: #252c35;
-}
-
-.rule-card.selected {
-    border-color: #3778c8;
-    box-shadow: 0 0 0 1px rgba(55, 120, 200, 0.25);
-    background: #222b36;
-}
-
-.rule-card.disabled {
-    opacity: 0.55;
-}
-
-.rule-toggle {
-    align-self: center;
-}
-
-.rule-toggle .switch {
-    width: 25px;
-    height: 15px;
-}
-
-.rule-toggle .switch::after {
-    width: 11px;
-    height: 11px;
-}
-
-.rule-toggle input:checked + .switch::after {
-    transform: translateX(10px);
-}
-
-.accent {
-    border-radius: 6px 0 0 6px;
-}
-
-.rule-copy {
-    min-width: 0;
-    align-self: center;
-}
-
-.rule-copy strong,
-.rule-copy small {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.rule-copy strong {
-    font-size: 11px;
-    margin-bottom: 4px;
-}
-
-.rule-copy small {
-    font:
-        9px/1.2 ui-monospace,
-        SFMono-Regular,
-        Menlo,
-        Monaco,
-        Consolas,
-        monospace;
-    color: #8c96a2;
-}
-
-.drag-handle {
-    align-self: center;
-    display: grid;
-    place-items: center;
-    width: 25px;
-    height: 34px;
-    color: #8b96a3;
-    font-size: 23px;
-    line-height: 1;
-    cursor: grab;
-    user-select: none;
-}
-
-.drag-handle:hover {
-    color: #c4cbd4;
-}
-
-.priority-note {
-    flex: 0 0 auto;
-    height: 62px;
-    margin: 9px;
-    padding: 10px;
-    border: 1px solid #303843;
-    border-radius: 7px;
-    background: #12171c;
-}
-
-.priority-note strong,
-.priority-note span {
-    display: block;
-}
-
-.priority-note strong {
-    font-size: 10px;
-    margin-bottom: 2px;
-}
-
-.priority-note span {
-    color: #788390;
-    font-size: 9px;
-}
-
-.editor {
-    display: flex;
-    flex-direction: column;
-}
-
-.editor-scroll {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 14px;
-}
-
-.field {
-    margin-bottom: 16px;
-}
-
-.field > label,
-.field-label-row label,
-.section-heading label,
-.custom-color label {
-    display: block;
-    margin-bottom: 6px;
-    font-size: 10px;
-    font-weight: 650;
-    color: #b9c0c9;
-}
-
-.field-label-row,
-.section-heading {
-    display: flex;
-    justify-content: space-between;
-    align-items: end;
-    gap: 12px;
-}
-
-.section-heading {
-    margin-bottom: 9px;
-}
-
-.section-heading label {
-    margin-bottom: 2px;
-}
-
-.section-heading small {
-    display: block;
-    color: #798491;
-    font-size: 9px;
-}
-
-.input,
-.query {
-    width: 100%;
-    border: 1px solid #343d49;
-    border-radius: 6px;
-    outline: none;
-    background: #0f1419;
-    color: #e5e7eb;
-}
-
-.input {
-    height: 35px;
-    padding: 0 10px;
-}
-
-.query {
-    min-height: 105px;
-    resize: vertical;
-    padding: 10px;
-    font:
-        11px/1.55 ui-monospace,
-        SFMono-Regular,
-        Menlo,
-        Monaco,
-        Consolas,
-        monospace;
-}
-
-.input:focus,
-.query:focus {
-    border-color: #4979b8;
-    box-shadow: 0 0 0 2px rgba(73, 121, 184, 0.12);
-}
-
-.validation {
-    margin-top: 6px;
-    font-size: 9px;
-}
-
-.validation.valid {
-    color: #62d68a;
-}
-
-.validation.invalid {
-    color: #f87171;
-}
-
-.palette {
-    display: grid;
-    grid-template-columns: repeat(8, minmax(82px, 1fr));
-    gap: 7px;
-}
-
-.swatch {
-    height: 42px;
-    padding: 0 8px;
-    border: 2px solid transparent;
-    border-radius: 6px;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px;
-    font-size: 9px;
-    font-weight: 650;
-    cursor: pointer;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.16);
-}
-
-.swatch:hover {
-    transform: translateY(-1px);
-}
-
-.swatch.selected {
-    border-color: #60a5fa;
-    box-shadow:
-        0 0 0 2px rgba(96, 165, 250, 0.22),
-        inset 0 0 0 1px rgba(0, 0, 0, 0.16);
-}
-
-.swatch-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    opacity: 0.8;
-}
-
-.swatch span:nth-child(2) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.check {
-    font-weight: 800;
-}
-
-.mini-preview {
-    max-width: 270px;
-    min-width: 190px;
-    padding: 7px 10px;
-    border-radius: 5px;
-    color: #FFFFFF;
-    font:
-        9px ui-monospace,
-        SFMono-Regular,
-        Menlo,
-        Monaco,
-        Consolas,
-        monospace;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
-    white-space: nowrap;
-}
-
-.custom-color {
-    margin-top: 10px;
-    display: grid;
-    grid-template-columns: auto minmax(160px, 280px) 34px;
-    align-items: center;
-    gap: 9px;
-}
-
-.custom-color label {
-    margin: 0;
-}
-
-.mono {
-    font-family:
-        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.color-picker {
-    width: 34px;
-    height: 34px;
-    border: 1px solid #343d49;
-    border-radius: 6px;
-    padding: 2px;
-    background: #1b2129;
-}
-
-.editor-footer {
-    flex: 0 0 80px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 9px;
-    padding: 9px;
-    border-top: 0;
-    background: #161b21;
-}
-
-.footer-status {
-    min-width: 0;
-    height: 62px;
-    flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 10px;
-    border: 1px solid #303843;
-    border-radius: 7px;
-    background: #12171c;
-}
-
-.footer-status > span {
-    min-width: 0;
-    flex: 1 1 auto;
-    color: #798491;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.footer-actions {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: auto;
-}
-
-.btn {
-    height: 32px;
-    padding: 0 11px;
-    border-radius: 6px;
-    border: 1px solid #39434f;
-    background: #222831;
-    color: #d3d7dd;
-    font-size: 10px;
-    font-weight: 650;
-    cursor: pointer;
-}
-
-.btn:hover:not(:disabled) {
-    background: #2a323c;
-}
-
-.btn:disabled {
-    opacity: 0.55;
-    cursor: default;
-}
-
-.btn.primary {
-    background: #17663e;
-    border-color: #25895a;
-    color: #d8ffe7;
-}
-
-.btn.primary:hover:not(:disabled) {
-    background: #1e7549;
-}
-
-.btn.danger {
-    border-color: #633a42;
-    color: #f0a5ad;
-}
-
-.btn.danger:hover {
-    border-color: #874752;
-    background: #382127;
-    color: #ffc1c7;
-}
-
-.btn.subtle {
-    height: 27px;
-    color: #9ca5b1;
-}
-
-.btn.save {
-    min-width: 85px;
-}
-
-.btn.trigger {
-    min-width: 118px;
-}
-
-.empty {
-    padding: 25px 10px;
-    color: #7f8995;
-    text-align: center;
-}
-
-.empty-editor {
-    display: grid;
-    place-items: center;
-    text-align: center;
-    color: #89939f;
-}
-
-.empty-editor h2 {
-    color: #d1d5db;
-    font-size: 14px;
-    margin: 7px 0 4px;
-}
-
-.empty-editor p {
-    margin: 0 0 12px;
-}
-
-.empty-icon {
-    font-size: 32px;
-}
-
-@media (max-width: 1250px) {
-    .palette {
-        grid-template-columns: repeat(6, minmax(82px, 1fr));
-    }
-
-    .workspace {
-        grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-    }
-}
-
-@media (max-width: 980px) {
-    .palette {
-        grid-template-columns: repeat(4, minmax(82px, 1fr));
-    }
-
-    .background-status {
-        display: none;
-    }
-
-    .brand p {
-        display: none;
-    }
-}
-</style>
+<style src="./App.css"></style>

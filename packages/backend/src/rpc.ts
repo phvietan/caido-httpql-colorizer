@@ -13,14 +13,16 @@ import {
   forgetColoredRequests,
   ownedRequestIds,
   rememberColoredRequest,
+  rememberColoredRequests,
 } from "./db";
 
-const metadataQuery = `query getRequestMetadata($id: ID!) { request(id: $id) { metadata { id } } }`;
+const metadataQuery = `query getRequestMetadata($id: ID!) { request(id: $id) { metadata { id color } } }`;
 const PAGE_SIZE = 500;
 const MUTATION_BATCH_SIZE = 20;
 const MUTATION_CONCURRENCY = 10;
 
 type ColorUpdate = { requestId: string; metadataId: string; color: string };
+type RequestMetadata = { id: string; color: string | null };
 type ColorAction = { requestId: string; color: string; ruleName?: string };
 type ColorFailure = { requestId: string; error: string };
 type ColorUpdateResult = { failures: ColorFailure[] };
@@ -28,7 +30,9 @@ type ActionExecutionResult = ColorUpdateResult & {
   skipped: string[];
   successful: string[];
 };
+type ApplySnapshot = Settings & { projectId: string | null };
 let settings: Settings = { enabled: true, groups: [], rules: [] };
+let activeProjectId: string | null = null;
 let settingsRevision = 0;
 let activeApply: Promise<ApplyResult> | null = null;
 let progress: ApplyProgress = { active: false, current: 0, total: 0, phase: "idle" };
@@ -38,9 +42,17 @@ export function setSettings(_sdk: SDK, next: Settings): void {
   settingsRevision += 1;
 }
 
+export function setActiveProject(projectId: string | null): void {
+  if (projectId === activeProjectId) return;
+  activeProjectId = projectId;
+  settingsRevision += 1;
+  progress = { active: false, current: 0, total: 0, phase: "idle" };
+}
+
 export async function recolorize(sdk: SDK): Promise<ApplyResult> {
-  const snapshot: Settings = {
+  const snapshot: ApplySnapshot = {
     enabled: settings.enabled,
+    projectId: activeProjectId,
     groups: settings.groups.map((group) => ({ ...group })),
     rules: settings.rules.map((rule) => ({ ...rule })),
   };
@@ -94,6 +106,7 @@ export async function getBackendStatus() {
   return {
     initialized: true,
     enabled: settings.enabled,
+    projectId: activeProjectId,
     ruleCount: settings.rules.length,
     progress,
   };
@@ -109,11 +122,15 @@ export async function onInterceptResponse(
   if (!match) return;
   try {
     const requestId = String(request.getId());
-    const metadataId = await getMetadataId(sdk, requestId);
-    if (!metadataId) throw new Error(`Request ${requestId} does not have metadata.`);
-    const result = await setRequestColors(sdk, [{ requestId, metadataId, color: match.color }]);
-    if (result.failures.length) throw new Error(result.failures[0]?.error ?? "Failed to set request color.");
-    await rememberColoredRequest(sdk, request.getId());
+    const metadata = await getMetadataWithRetry(sdk, requestId);
+    if (!metadata) throw new Error(`Request ${requestId} does not have metadata.`);
+    if (!colorsEqual(metadata.color, match.color)) {
+      const result = await setRequestColors(sdk, [{ requestId, metadataId: metadata.id, color: match.color }]);
+      if (result.failures.length) throw new Error(result.failures[0]?.error ?? "Failed to set request color.");
+    }
+    if (activeProjectId) {
+      await rememberColoredRequest(sdk, activeProjectId, request.getId());
+    }
   } catch (error) {
     sdk.console.error(
       `[HTTPQL Colorizer] Failed to color request ${request.getId()}`,
@@ -174,16 +191,43 @@ function firstMatchingRule(
   return null;
 }
 
-async function getMetadataId(
+async function getMetadata(
   sdk: SDK,
   requestId: string,
-): Promise<string | null> {
+): Promise<RequestMetadata | null> {
   const result = await sdk.graphql.execute<{
-    request?: { metadata?: { id?: string | null } | null } | null;
+    request?: { metadata?: { id?: string | null; color?: string | null } | null } | null;
   }>(metadataQuery, { id: requestId });
   if (result.errors?.length)
     throw new Error(result.errors.map((error) => error.message).join("; "));
-  return result.data?.request?.metadata?.id ?? null;
+  const metadata = result.data?.request?.metadata;
+  return metadata?.id
+    ? { id: metadata.id, color: metadata.color ?? null }
+    : null;
+}
+
+async function getMetadataWithRetry(
+  sdk: SDK,
+  requestId: string,
+): Promise<RequestMetadata | null> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      const metadata = await getMetadata(sdk, requestId);
+      if (metadata) return metadata;
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < 5) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+  if (lastError) throw lastError;
+  return null;
+}
+
+function colorsEqual(current: string | null, desired: string): boolean {
+  return String(current ?? "").toUpperCase() === desired.toUpperCase();
 }
 
 async function setRequestColors(
@@ -249,11 +293,14 @@ async function executeColorActions(
       }
       const resolved = await Promise.all(batch.map(async (action) => {
         try {
-          const metadataId = await getMetadataId(sdk, action.requestId);
-          if (!metadataId)
+          const metadata = await getMetadata(sdk, action.requestId);
+          if (!metadata)
             throw new Error(`Request ${action.requestId} does not have metadata.`);
+          if (colorsEqual(metadata.color, action.color)) {
+            return { unchangedId: action.requestId };
+          }
           return {
-            update: { requestId: action.requestId, metadataId, color: action.color },
+            update: { requestId: action.requestId, metadataId: metadata.id, color: action.color },
           };
         } catch (error) {
           const prefix = action.ruleName ? `Rule "${action.ruleName}" / ` : "";
@@ -274,15 +321,19 @@ async function executeColorActions(
       }
       const updates = resolved.flatMap((item) => item.update ? [item.update] : []);
       const metadataFailures = resolved.flatMap((item) => item.failure ? [item.failure] : []);
+      const unchangedIds = resolved.flatMap((item) => item.unchangedId ? [item.unchangedId] : []);
       const updateResult = await setRequestColors(sdk, updates);
       const failedIds = new Set(updateResult.failures.map((failure) => failure.requestId));
       progress.current += batch.length;
       return {
         failures: [...metadataFailures, ...updateResult.failures],
         skipped: [],
-        successful: updates
-          .filter((update) => !failedIds.has(update.requestId))
-          .map((update) => update.requestId),
+        successful: [
+          ...unchangedIds,
+          ...updates
+            .filter((update) => !failedIds.has(update.requestId))
+            .map((update) => update.requestId),
+        ],
       };
     },
     MUTATION_CONCURRENCY,
@@ -296,6 +347,8 @@ async function executeColorActions(
 
 async function reconcileOwnership(
   sdk: SDK,
+  projectId: string,
+  ownedIds: Set<string>,
   desiredIds: Set<string>,
   staleIds: Set<string>,
   successfulIds: Set<string>,
@@ -303,35 +356,32 @@ async function reconcileOwnership(
   const errors: string[] = [];
   await forgetColoredRequests(
     sdk,
+    projectId,
     [...staleIds].filter((id) => successfulIds.has(id)),
   );
-  const coloredIds = [...desiredIds].filter((id) => successfulIds.has(id));
-  const results = await mapWithConcurrency(
-    coloredIds,
-    async (id) => {
-      try {
-        await rememberColoredRequest(sdk, id);
-        return null;
-      } catch (error) {
-        return `Request ${id}: ${error instanceof Error ? error.message : String(error)}`;
-      }
-    },
-    MUTATION_CONCURRENCY,
+  const newlyColoredIds = [...desiredIds].filter(
+    (id) => successfulIds.has(id) && !ownedIds.has(id),
   );
-  for (const error of results) {
-    if (error) errors.push(error);
+  try {
+    await rememberColoredRequests(sdk, projectId, newlyColoredIds);
+  } catch (error) {
+    errors.push(
+      `Failed to save color ownership: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   return errors;
 }
 
 async function reapplyExistingHistory(
   sdk: SDK,
-  snapshot: Settings,
+  snapshot: ApplySnapshot,
   isCancelled: () => boolean,
 ): Promise<ApplyResult> {
+  if (!snapshot.projectId) return { colored: 0, cleared: 0, errors: [] };
+  const projectId = snapshot.projectId;
   progress = { active: true, current: 0, total: 0, phase: "finding" };
   try {
-    const ownedIds = new Set(await ownedRequestIds(sdk));
+    const ownedIds = new Set(await ownedRequestIds(sdk, projectId));
     if (isCancelled()) return cancelledResult();
     const desired = new Map<string, ColorAction>();
     const errors: string[] = [];
@@ -382,7 +432,7 @@ async function reapplyExistingHistory(
     const actionResult = await executeColorActions(sdk, actions, isCancelled);
     const successfulIds = new Set(actionResult.successful);
     errors.push(...actionResult.failures.map((failure) => failure.error));
-    errors.push(...await reconcileOwnership(sdk, desiredIds, staleIds, successfulIds));
+    errors.push(...await reconcileOwnership(sdk, projectId, ownedIds, desiredIds, staleIds, successfulIds));
     const colored = [...desiredIds].filter((id) => successfulIds.has(id)).length;
     const cleared = [...staleIds].filter((id) => successfulIds.has(id)).length;
     if (isCancelled()) return cancelledResult(cleared, errors, colored);

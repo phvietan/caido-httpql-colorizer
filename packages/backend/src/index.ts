@@ -7,6 +7,7 @@ import {
   getBackendStatus,
   onInterceptResponse,
   recolorize,
+  setActiveProject,
   setSettings,
   validateHttpql,
 } from "./rpc";
@@ -19,6 +20,11 @@ export async function init(sdk: SDK) {
   api.register("recolorize", recolorize);
   api.register("validateHttpql", validateHttpql);
   api.register("getBackendStatus", getBackendStatus);
+  const currentProject = await sdk.projects.getCurrent();
+  setActiveProject(currentProject ? String(currentProject.getId()) : null);
+  sdk.events.onProjectChange((_sdk, project) => {
+    setActiveProject(project ? String(project.getId()) : null);
+  });
   sdk.events.onInterceptResponse(onInterceptResponse);
   sdk.console.log("[HTTPQL Colorizer] Backend initialized.");
 }

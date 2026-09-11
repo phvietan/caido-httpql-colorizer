@@ -1,4 +1,4 @@
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type {
   ApplyResult,
   ColorRule,
@@ -16,6 +16,7 @@ export function useColorizer() {
   let applyRevision = 0;
   let storageWrites: Promise<void> = Promise.resolve();
   const settings = ref<Settings>({ enabled: true, groups: [], rules: [] });
+  let projectListener: { stop(): void } | undefined;
   const selectedId = ref<string | null>(null);
   const recoloringRuleNames = ref<string[]>([]);
   const statusText = ref("");
@@ -369,10 +370,10 @@ export function useColorizer() {
       const result: ApplyResult = await sdk.backend.recolorize();
       if (revision !== applyRevision || result.cancelled) return;
       if (result.errors.length > 0) {
-        statusText.value = `Colored ${result.colored}, cleared ${result.cleared}. ${result.errors.length} error(s) — see Caido logs.`;
+        statusText.value = `Colored ${result.colored} request${result.colored === 1 ? "" : "s"}, removed color from ${result.cleared} row${result.cleared === 1 ? "" : "s"}. ${result.errors.length} error(s) — see Caido logs.`;
         for (const error of result.errors) sdk.log.error(`[HTTPQL Colorizer] ${error}`);
       } else {
-        statusText.value = `Colored ${result.colored} request${result.colored === 1 ? "" : "s"}.`;
+        statusText.value = `Colored ${result.colored} request${result.colored === 1 ? "" : "s"}, removed color from ${result.cleared} row${result.cleared === 1 ? "" : "s"}.`;
       }
     } catch (error) {
       if (revision !== applyRevision) return;
@@ -389,6 +390,13 @@ export function useColorizer() {
         };
       }
     }
+  }
+
+  function handleProjectChange(projectId: string | undefined) {
+    applyRevision += 1;
+    recoloringRuleNames.value = [];
+    progress.value = { active: false, current: 0, total: 0, phase: "idle" };
+    statusText.value = projectId ? RECOLOR_REQUIRED : "No active Caido project.";
   }
 
   function load() {
@@ -409,9 +417,13 @@ export function useColorizer() {
     }
     selectedId.value = settings.value.rules[0]?.id ?? null;
     saveSettings();
+    projectListener = sdk.projects.onCurrentProjectChange((event) => {
+      handleProjectChange(event.projectId);
+    });
   }
 
-  onMounted(load);
+  onMounted(() => void load());
+  onBeforeUnmount(() => projectListener?.stop());
   return { settings, selectedId, recoloringRuleNames, statusText, validation,
     selectedRule, ruleSections, progress, progressPercent, draggedRuleId,
     draggedGroupId, dropTargetRuleId, dropTargetGroupId, dropPosition,
