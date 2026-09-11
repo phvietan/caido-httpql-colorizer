@@ -21,6 +21,8 @@ Caveats:
 
 - Rules run from top to bottom; the first enabled match determines the row color. All groups run before **Ungrouped** rules.
 - Can only colorize background because of Caido API limitation, text of Caido traffic is always white.
+- Rules and rule groups are global, which means even when switching projects you still keep seeing the same defined rules & groups.
+- However, enabled rules are remembered per project. When first opening a new project, all existing rules by default is disabled.
 
 ## Installation
 

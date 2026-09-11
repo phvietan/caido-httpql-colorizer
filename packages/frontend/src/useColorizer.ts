@@ -11,11 +11,16 @@ import { useSDK } from "./sdk";
 const RECOLOR_REQUIRED =
   "Does not automatically recolorize; click Trigger colorizing.";
 
+type ProjectRuleStates = Record<string, Record<string, boolean>>;
+type StoredSettings = Settings & { enabledByProject?: ProjectRuleStates };
+
 export function useColorizer() {
   const sdk = useSDK();
   let applyRevision = 0;
   let storageWrites: Promise<void> = Promise.resolve();
   const settings = ref<Settings>({ enabled: true, groups: [], rules: [] });
+  let currentProjectId: string | null = null;
+  let enabledByProject: ProjectRuleStates = {};
   let projectListener: { stop(): void } | undefined;
   const selectedId = ref<string | null>(null);
   const recoloringRuleNames = ref<string[]>([]);
@@ -317,8 +322,37 @@ export function useColorizer() {
     };
   }
 
+  function captureProjectEnabledState() {
+    if (!currentProjectId) return;
+    enabledByProject[currentProjectId] = Object.fromEntries(
+      settings.value.rules.map((rule) => [rule.id, rule.enabled]),
+    );
+  }
+
+  function applyProjectEnabledState(projectId: string | null) {
+    const projectState = projectId ? enabledByProject[projectId] : undefined;
+    for (const rule of settings.value.rules) {
+      rule.enabled = projectState?.[rule.id] ?? false;
+    }
+  }
+
+  function storedSettings(snapshot: Settings): StoredSettings {
+    const ruleIds = new Set(snapshot.rules.map((rule) => rule.id));
+    const projectStates = Object.fromEntries(
+      Object.entries(enabledByProject).map(([projectId, states]) => [
+        projectId,
+        Object.fromEntries(
+          Object.entries(states).filter(([ruleId]) => ruleIds.has(ruleId)),
+        ),
+      ]),
+    );
+    return { ...snapshot, enabledByProject: projectStates };
+  }
+
   function queueStorageWrite(snapshot: Settings): Promise<void> {
-    const write = storageWrites.then(() => sdk.storage.set(snapshot));
+    captureProjectEnabledState();
+    const stored = storedSettings(snapshot);
+    const write = storageWrites.then(() => sdk.storage.set(stored));
     storageWrites = write.catch(() => undefined);
     return write;
   }
@@ -393,14 +427,23 @@ export function useColorizer() {
   }
 
   function handleProjectChange(projectId: string | undefined) {
+    captureProjectEnabledState();
+    currentProjectId = projectId ?? null;
+    if (currentProjectId && !enabledByProject[currentProjectId]) {
+      enabledByProject[currentProjectId] = {};
+    }
+    applyProjectEnabledState(currentProjectId);
     applyRevision += 1;
     recoloringRuleNames.value = [];
     progress.value = { active: false, current: 0, total: 0, phase: "idle" };
     statusText.value = projectId ? RECOLOR_REQUIRED : "No active Caido project.";
+    saveSettings();
   }
 
-  function load() {
-    const stored = sdk.storage.get() as Settings | undefined;
+  async function load() {
+    const backendStatus = await sdk.backend.getBackendStatus();
+    currentProjectId = backendStatus.projectId;
+    const stored = sdk.storage.get() as StoredSettings | undefined;
     if (stored && Array.isArray(stored.rules)) {
       const groups = Array.isArray(stored.groups) ? stored.groups : [];
       const groupIds = new Set(groups.map((group) => group.id));
@@ -412,8 +455,18 @@ export function useColorizer() {
           groupId: rule.groupId && groupIds.has(rule.groupId) ? rule.groupId : null,
         })),
       };
+      enabledByProject = stored.enabledByProject
+        ? structuredClone(stored.enabledByProject)
+        : {};
+      if (currentProjectId && !enabledByProject[currentProjectId]) {
+        enabledByProject[currentProjectId] = Object.fromEntries(
+          settings.value.rules.map((rule) => [rule.id, rule.enabled]),
+        );
+      }
+      applyProjectEnabledState(currentProjectId);
     } else {
       newRule();
+      captureProjectEnabledState();
     }
     selectedId.value = settings.value.rules[0]?.id ?? null;
     saveSettings();
