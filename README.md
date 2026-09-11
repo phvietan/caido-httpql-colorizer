@@ -220,3 +220,7 @@ packages/
 - Repository: `https://github.com/phvietan/caido-httpql-colorizer`
 - Author: **phvietan**
 - Email: `phvietan@gmail.com`
+
+## License
+
+This project is available under the [MIT License](LICENSE). You may freely use, copy, modify, distribute, and sell it, provided the license notice is retained.
