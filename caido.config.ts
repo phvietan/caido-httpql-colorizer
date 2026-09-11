@@ -6,8 +6,8 @@ export default defineConfig({
   id: "httpql-colorizer",
   name: "HTTPQL Colorizer",
   description:
-    "Caido HTTP History row coloring using HTTPQL rules with rules & groups.",
-  version: "1.0.3",
+    "Colorize Caido HTTP History rows with ordered HTTPQL rules, draggable groups, and per-rule or group enable/disable controls.",
+  version: "1.0.4",
   author: {
     name: "phvietan",
     email: "phvietan@gmail.com",

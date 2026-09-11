@@ -10,8 +10,7 @@ fi
 commit_message="$1"
 
 if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Working tree must be clean before creating a release." >&2
-  exit 1
+  echo "Including current working-tree changes in the release commit."
 fi
 
 echo "Building the current package..."

@@ -1,8 +1,8 @@
 {
   "name": "caido-httpql-colorizer",
   "private": true,
-  "version": "1.0.3",
-  "description": "Color-code Caido HTTP History rows with ordered HTTPQL rules.",
+  "version": "1.0.4",
+  "description": "Colorize Caido HTTP History rows with ordered HTTPQL rules, draggable groups, and per-rule or group enable/disable controls.",
   "license": "MIT",
   "author": {
     "name": "phvietan",
