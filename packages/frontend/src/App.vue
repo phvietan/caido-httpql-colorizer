@@ -215,9 +215,6 @@ const {
                             <button class="btn danger" @click="removeRule">
                                 Delete
                             </button>
-                            <button class="btn save" @click="saveSettings">
-                                Save rule
-                            </button>
                             <button
                                 class="btn primary trigger"
                                 @click="triggerColorizing"

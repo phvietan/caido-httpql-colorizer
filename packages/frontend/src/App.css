@@ -770,10 +770,6 @@ input:checked + .switch::after {
     color: #9ca5b1;
 }
 
-.btn.save {
-    min-width: 85px;
-}
-
 .btn.trigger {
     min-width: 118px;
 }

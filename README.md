@@ -8,9 +8,9 @@ HTTPQL Colorizer helps you visually separate interesting traffic—API hosts, er
 
 ### How HTTPQL colorize your traffic
 
-- Create a rule, then define a [HTTPQL](https://docs.caido.io/reference/httpql.html) to match a traffic rows.
+- Create a rule, then define a [HTTPQL](https://docs.caido.io/reference/httpql.html) to match a traffic rows. **You can even use your filter presets**
 - Choose 32 built-in background colors or enter any custom `#RRGGBB` color.
-- Saving rules do not automatically colorize traffics. You need to select **Trigger colorizing** to apply the colors.
+- Edit your rules, then select **Trigger colorizing** to save the changes and apply the colors.
 - Applied rules will colorize traffic in HTTP History and all new incoming traffics.
 - Drag rules to change their priority.
 - Create groups to organize related rules.
@@ -20,9 +20,10 @@ HTTPQL Colorizer helps you visually separate interesting traffic—API hosts, er
 Caveats:
 
 - Rules run from top to bottom; the first enabled match determines the row color. All groups run before **Ungrouped** rules.
-- Can only colorize background because of Caido API limitation, text of Caido traffic is always white.
+- Can only edit the background color of traffics because of Caido API limitation, text of Caido traffic is always white.
 - Rules and rule groups are global, which means even when switching projects you still keep seeing the same defined rules & groups.
 - However, enabled rules are remembered per project. When first opening a new project, all existing rules by default is disabled.
+- However, presets are project-based. A rule that uses a preset from project A will not work in another project unless that project has a preset with the same name or alias.
 
 ## Installation
 

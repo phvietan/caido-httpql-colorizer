@@ -13,6 +13,9 @@ const RECOLOR_REQUIRED =
 
 type ProjectRuleStates = Record<string, Record<string, boolean>>;
 type StoredSettings = Settings & { enabledByProject?: ProjectRuleStates };
+type PreparedSettings = { backend: Settings; errors: string[] };
+
+const PRESET_REFERENCE = /(^|[\s(])preset\s*:\s*(?:"([^"]+)"|([A-Za-z0-9_-]+))/gi;
 
 export function useColorizer() {
   const sdk = useSDK();
@@ -286,6 +289,11 @@ export function useColorizer() {
 
   async function validate() {
     if (!selectedRule.value) return;
+    const presetErrors = missingPresetErrors([selectedRule.value]);
+    if (presetErrors.length > 0) {
+      validation.value = { ok: false, error: presetErrors[0] ?? "Preset does not exist." };
+      return;
+    }
     validation.value = await sdk.backend.validateHttpql(selectedRule.value.httpql);
   }
 
@@ -319,6 +327,60 @@ export function useColorizer() {
       enabled: true,
       groups: settings.value.groups.map((group) => ({ ...group })),
       rules: settings.value.rules.map((rule) => ({ ...rule })),
+    };
+  }
+
+  function presetNames(httpql: string): string[] {
+    return [...httpql.matchAll(PRESET_REFERENCE)].map(
+      (match) => match[2] ?? match[3] ?? "",
+    ).filter(Boolean);
+  }
+
+  function missingPresetErrors(rules: readonly ColorRule[]): string[] {
+    const filters = sdk.filters.getAll();
+    const available = new Set(
+      filters.flatMap((filter) => [filter.alias, filter.name]),
+    );
+    return rules.flatMap((rule) => presetNames(rule.httpql)
+      .filter((name) => !available.has(name))
+      .map((name) => `Rule "${rule.name}": preset "${name}" does not exist in this project.`));
+  }
+
+  function prepareBackendSettings(snapshot: Settings): PreparedSettings {
+    const filters = sdk.filters.getAll();
+    const queriesByName = new Map(
+      filters.flatMap((filter) => [
+        [filter.alias, String(filter.query)] as const,
+        [filter.name, String(filter.query)] as const,
+      ]),
+    );
+    const errors: string[] = [];
+    const rules = snapshot.rules.map((rule) => {
+      const missing: string[] = [];
+      const httpql = rule.httpql.replace(
+        PRESET_REFERENCE,
+        (reference, prefix: string, quoted: string | undefined, bare: string | undefined) => {
+          const name = quoted ?? bare ?? "";
+          const query = queriesByName.get(name);
+          if (!query) {
+            missing.push(name);
+            return reference;
+          }
+          return `${prefix}(${query})`;
+        },
+      );
+      if (rule.enabled) {
+        errors.push(...missing.map(
+          (name) => `Rule "${rule.name}": preset "${name}" does not exist in this project.`,
+        ));
+      }
+      return missing.length > 0
+        ? { ...rule, enabled: false }
+        : { ...rule, httpql };
+    });
+    return {
+      backend: { ...snapshot, rules },
+      errors,
     };
   }
 
@@ -359,12 +421,13 @@ export function useColorizer() {
 
   function saveSettings() {
     const snapshot = snapshotSettings();
+    const prepared = prepareBackendSettings(snapshot);
     const revision = ++applyRevision;
     recoloringRuleNames.value = [];
     progress.value = { ...progress.value, active: false, phase: "idle" };
-    statusText.value = RECOLOR_REQUIRED;
+    statusText.value = prepared.errors[0] ?? RECOLOR_REQUIRED;
     const storageWrite = queueStorageWrite(snapshot);
-    void Promise.all([storageWrite, sdk.backend.setSettings(snapshot)]).catch(
+    void Promise.all([storageWrite, sdk.backend.setSettings(prepared.backend)]).catch(
       (error: unknown) => {
         if (revision !== applyRevision) return;
         statusText.value = error instanceof Error ? error.message : String(error);
@@ -375,8 +438,22 @@ export function useColorizer() {
 
   function triggerColorizing() {
     const snapshot = snapshotSettings();
+    const prepared = prepareBackendSettings(snapshot);
     const revision = ++applyRevision;
     const storageWrite = queueStorageWrite(snapshot);
+    if (prepared.errors.length > 0) {
+      recoloringRuleNames.value = [];
+      progress.value = { active: false, current: 0, total: 0, phase: "idle" };
+      statusText.value = prepared.errors[0] ?? "A referenced preset does not exist.";
+      void Promise.all([
+        storageWrite,
+        sdk.backend.setSettings(prepared.backend),
+      ]).catch((error: unknown) => {
+        if (revision !== applyRevision) return;
+        statusText.value = error instanceof Error ? error.message : String(error);
+      });
+      return;
+    }
     progress.value = { active: true, current: 0, total: 0, phase: "finding" };
     recoloringRuleNames.value = snapshot.enabled
       ? snapshot.rules
@@ -386,7 +463,7 @@ export function useColorizer() {
     statusText.value = "Re-evaluating HTTP History…";
     const progressPoller = setInterval(() => void updateProgress(revision), 250);
     void updateProgress(revision);
-    void runColorizing(snapshot, revision, storageWrite, progressPoller);
+    void runColorizing(prepared.backend, revision, storageWrite, progressPoller);
   }
 
   async function runColorizing(
