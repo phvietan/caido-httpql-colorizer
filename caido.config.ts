@@ -7,7 +7,7 @@ export default defineConfig({
   name: "HTTPQL Colorizer",
   description:
     "Colorize Caido HTTP History rows with ordered HTTPQL rules, draggable groups, and per-rule or group enable/disable controls.",
-  version: "1.0.5",
+  version: "1.0.6",
   author: {
     name: "phvietan",
     email: "phvietan@gmail.com",
