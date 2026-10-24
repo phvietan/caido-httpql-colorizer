@@ -4,27 +4,25 @@ Color-code Caido HTTP History rows with ordered HTTPQL rules.
 
 HTTPQL Colorizer helps you visually separate interesting traffic—API hosts, error responses, authentication endpoints, static assets, or anything else HTTPQL can describe.
 
-## Features
+## Core features
 
-### How HTTPQL colorize your traffic
+- **Color traffic with HTTPQL.** Match hosts, paths, response codes, and other request or response properties. Rules can also reference your Caido filter presets.
+- **Color existing and incoming traffic.** Apply rules to HTTP History with **Trigger colorizing**, then automatically color new responses using the active rules. Rescans show progress and remove colors previously applied by the plugin to rows that no longer match.
+- **Keep rules separate for each project.** Every project has its own groups, rules, and enabled states. New projects start empty; switching back restores that project's settings.
+- **Copy rules between projects.** Choose a source by project name, group count, and rule count, then copy all its groups and rules, including ungrouped rules. Copies are independent and start disabled.
+- **Control rule priority and groups.** Drag rules and groups to reorder them or move rules between groups. Enable or disable individual rules or an entire group. Delete rules immediately; deleting a group asks for confirmation before removing its rules.
+- **Choose your colors.** Use 32 built-in background colors or enter a custom `#RRGGBB` value.
+- **Check HTTPQL while typing.** Expressions are validated automatically 300 ms after you stop typing, with valid/invalid feedback and warnings for missing filter presets.
 
-- Create a rule, then define a [HTTPQL](https://docs.caido.io/reference/httpql.html) to match a traffic rows. **You can even use your filter presets**
-- Choose 32 built-in background colors or enter any custom `#RRGGBB` color.
-- Edit your rules, then select **Trigger colorizing** to save the changes and apply the colors.
-- Applied rules will colorize traffic in HTTP History and all new incoming traffics.
-- Drag rules to change their priority.
-- Create groups to organize related rules.
-- Drag groups or rules to reorder them, move rules between groups, or place them in **Ungrouped**.
-- Toggle each rules or all rules in group(s).
-- Delete individual rules directly from their cards without a prompt. Deleting a group asks for confirmation with its name and rule count, then removes the group and all its rules.
-- Each project has its own groups, rules, and enabled states. New projects start empty; switching back restores that project's settings, including edits made before switching.
-- Select **Copy rules from other projects** to open the copy dialog. The source-project dropdown shows each project's name, group count, and rule count. Choose a project, then select **Copy all rules** to append all its groups and rules, including ungrouped rules. Copies have independent IDs and start disabled.
+## Usage
 
-Caveats:
+1. Open **HTTPQL Colorizer** from the Caido sidebar and select **+ New rule**.
+2. Name the rule, enter an [HTTPQL expression](https://docs.caido.io/reference/httpql.html), and choose a background color. For example, `resp.code.gte:500` matches server errors.
+3. Select **Trigger colorizing** to save your edits and apply the rules to existing HTTP History. New incoming responses are then colored automatically.
 
-- Rules run from top to bottom; the first enabled match determines the row color. All groups run before **Ungrouped** rules.
-- Can only edit the background color of traffics because of Caido API limitation, text of Caido traffic is always white.
-- However, presets are project-based. A rule that uses a preset from project A will not work in another project unless that project has a preset with the same name or alias.
+Rules run from top to bottom: the first enabled matching rule determines the row color. Grouped rules run before **Ungrouped** rules. Editing rules or switching projects does not automatically rescan existing traffic; select **Trigger colorizing** when you want to update it.
+
+Caido keeps traffic-table text white; this plugin changes only the background. Filter presets belong to their project, so copied rules that reference presets need matching preset names or aliases in the destination project.
 
 ## Installation
 
