@@ -63,6 +63,35 @@ h1 {
     gap: 12px;
 }
 
+.copy-rules-modal {
+    width: min(600px, calc(100vw - 64px));
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.copy-rules-modal .copy-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.copy-rules-modal p {
+    margin: 0;
+    color: var(--c-fg-subtle, #9199a5);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.copy-rules-modal .copy-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding-top: 16px;
+    border-top: 1px solid #343d49;
+}
+
 .rule-toggle {
     display: flex;
     align-items: center;
@@ -269,7 +298,7 @@ input:checked + .switch::after {
 .group-header {
     min-height: 31px;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
     align-items: center;
     gap: 8px;
     margin-bottom: 5px;
@@ -348,7 +377,7 @@ input:checked + .switch::after {
     height: 58px;
     position: relative;
     display: grid;
-    grid-template-columns: 4px minmax(0, 1fr) auto auto;
+    grid-template-columns: 4px minmax(0, 1fr) auto auto auto;
     gap: 10px;
     align-items: stretch;
     margin-bottom: 7px;
@@ -364,6 +393,32 @@ input:checked + .switch::after {
 .rule-card.dragging {
     opacity: 0.35;
     cursor: grabbing;
+}
+
+.delete-icon {
+    display: grid;
+    place-items: center;
+    align-self: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #8b96a3;
+    cursor: pointer;
+    transition: color 0.12s ease, background 0.12s ease;
+}
+
+.delete-icon:hover,
+.delete-icon:focus-visible {
+    color: #f0a5ad;
+    background: rgba(240, 105, 120, 0.1);
+}
+
+.delete-icon:focus-visible {
+    outline: 2px solid #f0a5ad;
+    outline-offset: 2px;
 }
 
 .rule-card.drop-before::before,

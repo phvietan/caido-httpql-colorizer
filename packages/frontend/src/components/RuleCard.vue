@@ -12,6 +12,7 @@ defineProps<{
 const emit = defineEmits<{
   select: [];
   toggle: [];
+  delete: [];
   dragStart: [event: DragEvent];
   dragOver: [event: DragEvent];
   drop: [];
@@ -27,7 +28,7 @@ const emit = defineEmits<{
     draggable="true"
     :class="{
       selected,
-      disabled: !rule.enabled,
+      disabled: !rule.enabled && rule.groupId !== null,
       dragging,
       'drop-before': dropBefore,
       'drop-after': dropAfter,
@@ -48,6 +49,11 @@ const emit = defineEmits<{
       <input v-model="rule.enabled" type="checkbox" @change="emit('toggle')" />
       <span class="switch"></span>
     </label>
+    <button type="button" class="delete-icon" :aria-label="`Delete rule ${rule.name}`" title="Delete rule" @click.stop="emit('delete')" @keydown.stop>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6m4-6v6" />
+      </svg>
+    </button>
     <span class="drag-handle" title="Drag to reorder">⠿</span>
   </div>
 </template>

@@ -12,6 +12,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   newRule: []; newGroup: []; select: [id: string]; save: []; toggleGroup: [id: string];
+  deleteRule: [id: string]; deleteGroup: [id: string];
   ruleDragStart: [id: string, event: DragEvent]; ruleDragOver: [id: string, event: DragEvent];
   ruleDrop: [id: string]; ruleDragEnd: []; sectionDragOver: [id: string | null, event: DragEvent];
   sectionDrop: [id: string | null]; groupDragStart: [id: string, event: DragEvent]; groupDragEnd: [];
@@ -26,7 +27,7 @@ const emit = defineEmits<{
     </div></div>
     <div class="rule-list">
       <section v-for="section in sections" :key="section.id ?? 'ungrouped'" class="rule-group" :class="{
-        'drop-group': dropTargetGroupId === section.id, 'dragging-group': draggedGroupId === section.id,
+        'drop-group': dropTargetGroupId === section.id, 'dragging-group': draggedGroupId !== null && draggedGroupId === section.id,
         'group-drop-before': groupOrderTargetId === section.id && groupDropPosition === 'before',
         'group-drop-after': groupOrderTargetId === section.id && groupDropPosition === 'after',
       }" @dragover.prevent="emit('sectionDragOver', section.id, $event)" @drop.prevent="emit('sectionDrop', section.id)">
@@ -35,12 +36,17 @@ const emit = defineEmits<{
           <input v-model="section.group.name" class="group-name" @change="emit('save')" />
           <span>{{ section.rules.length }} rules</span>
           <button class="group-toggle" @click="emit('toggleGroup', section.group!.id)">{{ props.groupAllEnabled(section.group!.id) ? 'Disable all' : 'Enable all' }}</button>
+          <button type="button" class="delete-icon" :aria-label="`Delete group ${section.group.name}`" title="Delete group" @click="emit('deleteGroup', section.group!.id)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6m4-6v6" />
+            </svg>
+          </button>
         </div>
         <div v-else-if="section.name" class="group-header ungrouped"><strong>{{ section.name }}</strong></div>
         <RuleCard v-for="rule in section.rules" :key="rule.id" :rule="rule" :selected="selectedId === rule.id" :dragging="draggedRuleId === rule.id"
           :drop-before="dropTargetRuleId === rule.id && dropPosition === 'before'" :drop-after="dropTargetRuleId === rule.id && dropPosition === 'after'"
           @drag-start="emit('ruleDragStart', rule.id, $event)" @drag-over="emit('ruleDragOver', rule.id, $event)" @drop="emit('ruleDrop', rule.id)" @drag-end="emit('ruleDragEnd')"
-          @select="emit('select', rule.id)" @toggle="emit('save')" />
+          @select="emit('select', rule.id)" @toggle="emit('save')" @delete="emit('deleteRule', rule.id)" />
         <div v-if="section.rules.length === 0 && (section.group || groups.length > 0)" class="group-empty">Drop rules here</div>
       </section>
       <div v-if="rules.length === 0" class="empty">No rules yet. Create one to get started.</div>

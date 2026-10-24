@@ -26,7 +26,6 @@ export async function rememberColoredRequests(
   requestIds: readonly string[],
 ): Promise<void> {
   if (requestIds.length === 0) return;
-  await ensureDatabase(sdk);
   const db = await sdk.meta.db();
   await forEachBatch(requestIds, async (batch) => {
     const values = batch.map(() => "(?, ?)").join(", ");
@@ -39,7 +38,6 @@ export async function rememberColoredRequests(
 }
 
 export async function ownedRequestIds(sdk: SDK, projectId: string): Promise<string[]> {
-  await ensureDatabase(sdk);
   const db = await sdk.meta.db();
   const statement = await db.prepare(`SELECT request_id FROM ${TABLE} WHERE project_id = ?`);
   const rows = (await statement.all(String(projectId))) as Array<{ request_id: string }>;
@@ -52,7 +50,6 @@ export async function forgetColoredRequests(
   requestIds: readonly string[],
 ): Promise<void> {
   if (requestIds.length === 0) return;
-  await ensureDatabase(sdk);
   const db = await sdk.meta.db();
   await forEachBatch(requestIds, async (batch) => {
     const placeholders = batch.map(() => "?").join(", ");

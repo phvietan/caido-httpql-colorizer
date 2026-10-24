@@ -16,13 +16,14 @@ HTTPQL Colorizer helps you visually separate interesting traffic—API hosts, er
 - Create groups to organize related rules.
 - Drag groups or rules to reorder them, move rules between groups, or place them in **Ungrouped**.
 - Toggle each rules or all rules in group(s).
+- Delete individual rules directly from their cards without a prompt. Deleting a group asks for confirmation with its name and rule count, then removes the group and all its rules.
+- Each project has its own groups, rules, and enabled states. New projects start empty; switching back restores that project's settings, including edits made before switching.
+- Select **Copy rules from other projects** to open the copy dialog. The source-project dropdown shows each project's name, group count, and rule count. Choose a project, then select **Copy all rules** to append all its groups and rules, including ungrouped rules. Copies have independent IDs and start disabled.
 
 Caveats:
 
 - Rules run from top to bottom; the first enabled match determines the row color. All groups run before **Ungrouped** rules.
 - Can only edit the background color of traffics because of Caido API limitation, text of Caido traffic is always white.
-- Rules and rule groups are global, which means even when switching projects you still keep seeing the same defined rules & groups.
-- However, enabled rules are remembered per project. When first opening a new project, all existing rules by default is disabled.
 - However, presets are project-based. A rule that uses a preset from project A will not work in another project unless that project has a preset with the same name or alias.
 
 ## Installation

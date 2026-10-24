@@ -1,11 +1,15 @@
 <script setup lang="ts">
+import { onBeforeUnmount, watch } from "vue";
 import { COLOR_PRESETS } from "./colors";
 import BackgroundStatus from "./components/BackgroundStatus.vue";
 import ProgressStatus from "./components/ProgressStatus.vue";
 import RulesPanel from "./components/RulesPanel.vue";
-import RuleCard from "./components/RuleCard.vue";
+import CopyRulesModal from "./components/CopyRulesModal.vue";
+import DeleteGroupModal from "./components/DeleteGroupModal.vue";
+import { useSDK } from "./sdk";
 import { useColorizer } from "./useColorizer";
 
+const colorizer = useColorizer();
 const {
     settings,
     selectedId,
@@ -40,7 +44,50 @@ const {
     selectPreset,
     saveSettings,
     triggerColorizing,
-} = useColorizer();
+    currentProjectId,
+} = colorizer;
+const sdk = useSDK();
+let copyDialog: { close(): void } | undefined;
+let deleteGroupDialog: { close(): void } | undefined;
+
+function openCopyRules() {
+    copyDialog?.close();
+    void colorizer.loadCopyProjects();
+    copyDialog = sdk.window.showDialog({
+        component: CopyRulesModal,
+        props: { colorizer },
+        events: { close: () => copyDialog?.close() },
+    }, { title: "Copy rules", modal: true });
+}
+
+function confirmDeleteGroup(groupId: string) {
+    const group = settings.value.groups.find((group) => group.id === groupId);
+    if (!group) return;
+    const projectId = currentProjectId.value;
+    deleteGroupDialog?.close();
+    const dialog = sdk.window.showDialog({
+        component: DeleteGroupModal,
+        props: {
+            groupName: group.name,
+            ruleCount: settings.value.rules.filter((rule) => rule.groupId === groupId).length,
+        },
+        events: {
+            close: () => dialog.close(),
+            confirm: () => {
+                if (currentProjectId.value === projectId) colorizer.removeGroup(groupId);
+                dialog.close();
+            },
+        },
+    }, { title: "Delete group", modal: true });
+    deleteGroupDialog = dialog;
+}
+
+function closeDialogs() {
+    copyDialog?.close();
+    deleteGroupDialog?.close();
+}
+watch(currentProjectId, closeDialogs);
+onBeforeUnmount(closeDialogs);
 </script>
 
 <template>
@@ -58,12 +105,13 @@ const {
             </div>
 
             <div class="top-actions">
+                <button class="btn" :disabled="!currentProjectId" @click="openCopyRules">Copy rules from other projects</button>
                 <BackgroundStatus :rule-names="recoloringRuleNames" />
             </div>
         </header>
 
         <main class="workspace">
-            <RulesPanel
+            <RulesPanel v-if="currentProjectId"
                 :rules="settings.rules"
                 :groups="settings.groups"
                 :sections="ruleSections"
@@ -86,6 +134,8 @@ const {
                 "
                 @save="saveSettings"
                 @toggle-group="toggleGroup"
+                @delete-rule="removeRule"
+                @delete-group="confirmDeleteGroup"
                 @rule-drag-start="startRuleDrag"
                 @rule-drag-over="updateRuleDropTarget"
                 @rule-drop="dropRule"
@@ -212,7 +262,7 @@ const {
                             :percent="progressPercent"
                         />
                         <div class="footer-actions">
-                            <button class="btn danger" @click="removeRule">
+                            <button class="btn danger" @click="removeRule()">
                                 Delete
                             </button>
                             <button
@@ -230,15 +280,9 @@ const {
                 <div>
                     <div class="empty-icon">🎨</div>
                     <h2>No rule selected</h2>
-                    <p>Create a rule to start highlighting HTTP History.</p>
-                    <button class="btn primary" @click="newRule">
+                    <p>{{ currentProjectId ? 'Create a rule or copy a group from another project.' : 'Open a Caido project to configure its rules.' }}</p>
+                    <button class="btn primary" :disabled="!currentProjectId" @click="newRule">
                         + New rule
-                    </button>
-                    <button
-                        class="btn primary trigger"
-                        @click="triggerColorizing"
-                    >
-                        Trigger colorizing
                     </button>
                 </div>
             </section>

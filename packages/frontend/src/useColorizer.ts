@@ -1,45 +1,51 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type {
   ApplyResult,
+  ApplyProgress,
   ColorRule,
   RuleGroup,
   Settings,
   ValidationResult,
 } from "shared";
 import { useSDK } from "./sdk";
+import { Project, Setting } from "shared";
+import type { StoredSettings } from "shared";
+import { useRuleDrag } from "./useRuleDrag";
+import { missingPresetErrors, prepareBackendSettings } from "./presets";
 
 const RECOLOR_REQUIRED =
   "Does not automatically recolorize; click Trigger colorizing.";
-
-type ProjectRuleStates = Record<string, Record<string, boolean>>;
-type StoredSettings = Settings & { enabledByProject?: ProjectRuleStates };
-type PreparedSettings = { backend: Settings; errors: string[] };
-
-const PRESET_REFERENCE = /(^|[\s(])preset\s*:\s*(?:"([^"]+)"|([A-Za-z0-9_-]+))/gi;
 
 export function useColorizer() {
   const sdk = useSDK();
   let applyRevision = 0;
   let storageWrites: Promise<void> = Promise.resolve();
-  const settings = ref<Settings>({ enabled: true, groups: [], rules: [] });
-  let currentProjectId: string | null = null;
-  let enabledByProject: ProjectRuleStates = {};
+  const project = ref<Project | null>(null);
+  const empty = new Setting();
+  const settings = computed(() => project.value?.setting ?? empty);
+  const currentProjectId = computed(() => project.value?.id ?? null);
+  const storedSettings = ref<StoredSettings>({ settingsByProject: {} });
+  const projectNames = ref<Record<string, string>>({});
+  const copySourceProjectId = ref("");
+  const copyLoading = ref(false);
+  const copyError = ref("");
   let projectListener: { stop(): void } | undefined;
   const selectedId = ref<string | null>(null);
   const recoloringRuleNames = ref<string[]>([]);
   const statusText = ref("");
   const validation = ref<ValidationResult | null>(null);
-  const draggedRuleId = ref<string | null>(null);
-  const draggedGroupId = ref<string | null>(null);
-  const dropTargetRuleId = ref<string | null>(null);
-  const dropTargetGroupId = ref<string | null | undefined>(undefined);
-  const dropPosition = ref<"before" | "after" | null>(null);
-  const groupOrderTargetId = ref<string | null | undefined>(undefined);
-  const groupDropPosition = ref<"before" | "after" | null>(null);
-  const progress = ref({ active: false, current: 0, total: 0, phase: "idle" as const });
+  const drag = useRuleDrag(settings, selectedId, saveSettings);
+  const { finishRuleDrag, finishGroupDrag } = drag;
+  const progress = ref<ApplyProgress>({ active: false, current: 0, total: 0, phase: "idle" });
   const progressPercent = computed(() => progress.value.total > 0
     ? Math.round((progress.value.current / progress.value.total) * 100)
     : 0);
+  const copyProjects = computed(() => Object.entries(storedSettings.value.settingsByProject)
+    .filter(([id, snapshot]) => id !== currentProjectId.value && projectNames.value[id] && snapshot.rules.length > 0)
+    .map(([id, snapshot]) => ({
+      id, name: projectNames.value[id]!,
+      groupCount: snapshot.groups.length, ruleCount: snapshot.rules.length,
+    })));
 
   const selectedRule = computed(
     () => settings.value.rules.find((rule) => rule.id === selectedId.value) ?? null,
@@ -64,6 +70,7 @@ export function useColorizer() {
   }
 
   function newRule() {
+    if (!currentProjectId.value) return;
     const rule: ColorRule = {
       id: uid(), name: `Rule ${settings.value.rules.length + 1}`,
       httpql: 'req.host.cont:"example.com"', color: "#185A6C", enabled: true,
@@ -72,9 +79,11 @@ export function useColorizer() {
     settings.value.rules.push(rule);
     selectedId.value = rule.id;
     validation.value = null;
+    saveSettings();
   }
 
   function newGroup() {
+    if (!currentProjectId.value) return;
     const group: RuleGroup = {
       id: uid(),
       name: `Group ${settings.value.groups.length + 1}`,
@@ -83,17 +92,6 @@ export function useColorizer() {
     saveSettings();
   }
 
-  function orderedRules(): ColorRule[] {
-    const ordered = settings.value.groups.flatMap((group) =>
-      settings.value.rules.filter((rule) => rule.groupId === group.id),
-    );
-    ordered.push(...settings.value.rules.filter((rule) => !rule.groupId));
-    return ordered;
-  }
-
-  function normalizeRuleOrder() {
-    settings.value.rules = orderedRules();
-  }
 
   function groupAllEnabled(groupId: string): boolean {
     const rules = settings.value.rules.filter((rule) => rule.groupId === groupId);
@@ -107,194 +105,40 @@ export function useColorizer() {
     saveSettings();
   }
 
-  function removeRule() {
-    const index = settings.value.rules.findIndex((rule) => rule.id === selectedId.value);
+  function removeRule(ruleId: string | null = selectedId.value) {
+    const index = settings.value.removeRule(ruleId);
     if (index < 0) return;
-    settings.value.rules.splice(index, 1);
-    selectedId.value = settings.value.rules[Math.min(index, settings.value.rules.length - 1)]?.id ?? null;
-    validation.value = null;
-    saveSettings();
-  }
-
-  function startRuleDrag(ruleId: string, event: DragEvent) {
-    finishGroupDrag();
-    draggedRuleId.value = ruleId;
-    selectedId.value = ruleId;
-    event.dataTransfer?.setData("text/plain", ruleId);
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-  }
-
-  function updateRuleDropTarget(ruleId: string, event: DragEvent) {
-    if (!draggedRuleId.value || draggedRuleId.value === ruleId) {
-      dropTargetRuleId.value = null;
-      dropPosition.value = null;
-      return;
+    if (selectedId.value === ruleId) {
+      selectedId.value = settings.value.rules[Math.min(index, settings.value.rules.length - 1)]?.id ?? null;
+      validation.value = null;
     }
-    const target = event.currentTarget as HTMLElement;
-    const bounds = target.getBoundingClientRect();
-    dropTargetRuleId.value = ruleId;
-    dropTargetGroupId.value = undefined;
-    dropPosition.value = event.clientY < bounds.top + bounds.height / 2
-      ? "before"
-      : "after";
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  }
-
-  function finishRuleDrag() {
-    draggedRuleId.value = null;
-    dropTargetRuleId.value = null;
-    dropTargetGroupId.value = undefined;
-    dropPosition.value = null;
-  }
-
-  function dropRule(ruleId: string) {
-    const sourceId = draggedRuleId.value;
-    const position = dropPosition.value;
-    if (!sourceId || sourceId === ruleId || !position) {
-      finishRuleDrag();
-      return;
-    }
-
-    const sourceIndex = settings.value.rules.findIndex((rule) => rule.id === sourceId);
-    const targetRule = settings.value.rules.find((rule) => rule.id === ruleId);
-    if (sourceIndex < 0 || !targetRule) {
-      finishRuleDrag();
-      return;
-    }
-    const [rule] = settings.value.rules.splice(sourceIndex, 1);
-    const targetIndex = settings.value.rules.findIndex((item) => item.id === ruleId);
-    if (!rule || targetIndex < 0) {
-      finishRuleDrag();
-      return;
-    }
-    rule.groupId = targetRule.groupId;
-    settings.value.rules.splice(
-      targetIndex + (position === "after" ? 1 : 0),
-      0,
-      rule,
-    );
-    normalizeRuleOrder();
     finishRuleDrag();
     saveSettings();
   }
 
-  function updateGroupDropTarget(groupId: string | null) {
-    if (!draggedRuleId.value) return;
-    dropTargetRuleId.value = null;
-    dropTargetGroupId.value = groupId;
-    dropPosition.value = null;
-  }
-
-  function dropRuleIntoGroup(groupId: string | null) {
-    const sourceIndex = settings.value.rules.findIndex(
-      (rule) => rule.id === draggedRuleId.value,
-    );
-    if (sourceIndex < 0) {
-      finishRuleDrag();
-      return;
+  function removeGroup(groupId: string) {
+    if (!settings.value.removeGroup(groupId)) return;
+    if (!settings.value.rules.some((rule) => rule.id === selectedId.value)) {
+      selectedId.value = settings.value.rules[0]?.id ?? null;
+      validation.value = null;
     }
-    const [rule] = settings.value.rules.splice(sourceIndex, 1);
-    if (!rule) {
-      finishRuleDrag();
-      return;
-    }
-    rule.groupId = groupId;
-    settings.value.rules.push(rule);
-    normalizeRuleOrder();
     finishRuleDrag();
-    saveSettings();
-  }
-
-  function startGroupDrag(groupId: string, event: DragEvent) {
-    finishRuleDrag();
-    draggedGroupId.value = groupId;
-    event.dataTransfer?.setData("text/plain", groupId);
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-  }
-
-  function updateSectionDropTarget(
-    sectionId: string | null,
-    event: DragEvent,
-  ) {
-    if (!draggedGroupId.value) {
-      updateGroupDropTarget(sectionId);
-      return;
-    }
-    if (draggedGroupId.value === sectionId) {
-      groupOrderTargetId.value = undefined;
-      groupDropPosition.value = null;
-      return;
-    }
-    const target = event.currentTarget as HTMLElement;
-    const bounds = target.getBoundingClientRect();
-    groupOrderTargetId.value = sectionId;
-    groupDropPosition.value = sectionId === null ||
-      event.clientY < bounds.top + bounds.height / 2
-        ? "before"
-        : "after";
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  }
-
-  function finishGroupDrag() {
-    draggedGroupId.value = null;
-    groupOrderTargetId.value = undefined;
-    groupDropPosition.value = null;
-  }
-
-  function dropGroup(targetGroupId: string | null) {
-    const sourceId = draggedGroupId.value;
-    const position = groupDropPosition.value;
-    if (!sourceId || sourceId === targetGroupId || !position) {
-      finishGroupDrag();
-      return;
-    }
-    const sourceIndex = settings.value.groups.findIndex(
-      (group) => group.id === sourceId,
-    );
-    if (sourceIndex < 0) {
-      finishGroupDrag();
-      return;
-    }
-    const [group] = settings.value.groups.splice(sourceIndex, 1);
-    if (!group) {
-      finishGroupDrag();
-      return;
-    }
-    if (targetGroupId === null) {
-      settings.value.groups.push(group);
-    } else {
-      const targetIndex = settings.value.groups.findIndex(
-        (item) => item.id === targetGroupId,
-      );
-      if (targetIndex < 0) {
-        settings.value.groups.splice(sourceIndex, 0, group);
-        finishGroupDrag();
-        return;
-      }
-      settings.value.groups.splice(
-        targetIndex + (position === "after" ? 1 : 0),
-        0,
-        group,
-      );
-    }
-    normalizeRuleOrder();
     finishGroupDrag();
     saveSettings();
   }
 
-  function handleSectionDrop(sectionId: string | null) {
-    if (draggedGroupId.value) dropGroup(sectionId);
-    else dropRuleIntoGroup(sectionId);
-  }
 
   async function validate() {
     if (!selectedRule.value) return;
-    const presetErrors = missingPresetErrors([selectedRule.value]);
+    const revision = applyRevision;
+    const ruleId = selectedRule.value.id;
+    const presetErrors = missingPresetErrors([selectedRule.value], sdk.filters.getAll());
     if (presetErrors.length > 0) {
       validation.value = { ok: false, error: presetErrors[0] ?? "Preset does not exist." };
       return;
     }
-    validation.value = await sdk.backend.validateHttpql(selectedRule.value.httpql);
+    const result = await sdk.backend.validateHttpql(selectedRule.value.httpql);
+    if (revision === applyRevision && selectedId.value === ruleId) validation.value = result;
   }
 
   function selectPreset(hex: string) {
@@ -322,98 +166,49 @@ export function useColorizer() {
   }
 
   function snapshotSettings(): Settings {
-    normalizeRuleOrder();
-    return {
-      enabled: true,
-      groups: settings.value.groups.map((group) => ({ ...group })),
-      rules: settings.value.rules.map((rule) => ({ ...rule })),
-    };
+    settings.value.orderRules();
+    return { ...settings.value.toJSON(), enabled: true };
   }
 
-  function presetNames(httpql: string): string[] {
-    return [...httpql.matchAll(PRESET_REFERENCE)].map(
-      (match) => match[2] ?? match[3] ?? "",
-    ).filter(Boolean);
-  }
-
-  function missingPresetErrors(rules: readonly ColorRule[]): string[] {
-    const filters = sdk.filters.getAll();
-    const available = new Set(
-      filters.flatMap((filter) => [filter.alias, filter.name]),
-    );
-    return rules.flatMap((rule) => presetNames(rule.httpql)
-      .filter((name) => !available.has(name))
-      .map((name) => `Rule "${rule.name}": preset "${name}" does not exist in this project.`));
-  }
-
-  function prepareBackendSettings(snapshot: Settings): PreparedSettings {
-    const filters = sdk.filters.getAll();
-    const queriesByName = new Map(
-      filters.flatMap((filter) => [
-        [filter.alias, String(filter.query)] as const,
-        [filter.name, String(filter.query)] as const,
-      ]),
-    );
-    const errors: string[] = [];
-    const rules = snapshot.rules.map((rule) => {
-      const missing: string[] = [];
-      const httpql = rule.httpql.replace(
-        PRESET_REFERENCE,
-        (reference, prefix: string, quoted: string | undefined, bare: string | undefined) => {
-          const name = quoted ?? bare ?? "";
-          const query = queriesByName.get(name);
-          if (!query) {
-            missing.push(name);
-            return reference;
-          }
-          return `${prefix}(${query})`;
-        },
-      );
-      if (rule.enabled) {
-        errors.push(...missing.map(
-          (name) => `Rule "${rule.name}": preset "${name}" does not exist in this project.`,
-        ));
-      }
-      return missing.length > 0
-        ? { ...rule, enabled: false }
-        : { ...rule, httpql };
-    });
-    return {
-      backend: { ...snapshot, rules },
-      errors,
-    };
-  }
-
-  function captureProjectEnabledState() {
-    if (!currentProjectId) return;
-    enabledByProject[currentProjectId] = Object.fromEntries(
-      settings.value.rules.map((rule) => [rule.id, rule.enabled]),
-    );
-  }
-
-  function applyProjectEnabledState(projectId: string | null) {
-    const projectState = projectId ? enabledByProject[projectId] : undefined;
-    for (const rule of settings.value.rules) {
-      rule.enabled = projectState?.[rule.id] ?? false;
+  async function loadCopyProjects() {
+    copyLoading.value = false;
+    copyError.value = "";
+    copySourceProjectId.value = "";
+    const projectId = currentProjectId.value;
+    if (!Object.entries(storedSettings.value.settingsByProject)
+      .some(([id, snapshot]) => id !== projectId && snapshot.rules.length > 0)) return;
+    copyLoading.value = true;
+    try {
+      const projects = await sdk.backend.getProjects();
+      if (projectId !== currentProjectId.value) return;
+      projectNames.value = Object.fromEntries(projects.map((project) => [project.id, project.name]));
+      copySourceProjectId.value = copyProjects.value[0]?.id ?? "";
+    } catch (error) {
+      copyError.value = "Could not load project names. Please try again.";
+      sdk.log.error(`[HTTPQL Colorizer] Could not load project names: ${String(error)}`);
+    } finally {
+      copyLoading.value = false;
     }
   }
 
-  function storedSettings(snapshot: Settings): StoredSettings {
-    const ruleIds = new Set(snapshot.rules.map((rule) => rule.id));
-    const projectStates = Object.fromEntries(
-      Object.entries(enabledByProject).map(([projectId, states]) => [
-        projectId,
-        Object.fromEntries(
-          Object.entries(states).filter(([ruleId]) => ruleIds.has(ruleId)),
-        ),
-      ]),
-    );
-    return { ...snapshot, enabledByProject: projectStates };
+  function copyRules() {
+    if (!currentProjectId.value || copySourceProjectId.value === currentProjectId.value) return;
+    const source = storedSettings.value.settingsByProject[copySourceProjectId.value];
+    if (!source) return;
+    if (!project.value) return;
+    const copied = project.value.copyRulesFrom(new Project(copySourceProjectId.value, source), uid);
+    selectedId.value = copied.rules[0]?.id ?? selectedId.value;
+    validation.value = null;
+    saveSettings();
+    sdk.window.showToast(`Copied ${copied.rules.length} rules from "${projectNames.value[copySourceProjectId.value]}". Copied rules start disabled.`, { variant: "success" });
   }
 
+
   function queueStorageWrite(snapshot: Settings): Promise<void> {
-    captureProjectEnabledState();
-    const stored = storedSettings(snapshot);
+    if (currentProjectId.value) {
+      storedSettings.value.settingsByProject[currentProjectId.value] = snapshot;
+    }
+    const stored = JSON.parse(JSON.stringify(storedSettings.value)) as StoredSettings;
     const write = storageWrites.then(() => sdk.storage.set(stored));
     storageWrites = write.catch(() => undefined);
     return write;
@@ -421,13 +216,13 @@ export function useColorizer() {
 
   function saveSettings() {
     const snapshot = snapshotSettings();
-    const prepared = prepareBackendSettings(snapshot);
+    const prepared = prepareBackendSettings(snapshot, sdk.filters.getAll());
     const revision = ++applyRevision;
     recoloringRuleNames.value = [];
     progress.value = { ...progress.value, active: false, phase: "idle" };
-    statusText.value = prepared.errors[0] ?? RECOLOR_REQUIRED;
+    statusText.value = currentProjectId.value ? prepared.errors[0] ?? RECOLOR_REQUIRED : "No active Caido project.";
     const storageWrite = queueStorageWrite(snapshot);
-    void Promise.all([storageWrite, sdk.backend.setSettings(prepared.backend)]).catch(
+    void Promise.all([storageWrite, sdk.backend.setSettings(prepared.backend, currentProjectId.value)]).catch(
       (error: unknown) => {
         if (revision !== applyRevision) return;
         statusText.value = error instanceof Error ? error.message : String(error);
@@ -437,8 +232,9 @@ export function useColorizer() {
   }
 
   function triggerColorizing() {
+    if (!currentProjectId.value) return;
     const snapshot = snapshotSettings();
-    const prepared = prepareBackendSettings(snapshot);
+    const prepared = prepareBackendSettings(snapshot, sdk.filters.getAll());
     const revision = ++applyRevision;
     const storageWrite = queueStorageWrite(snapshot);
     if (prepared.errors.length > 0) {
@@ -447,7 +243,7 @@ export function useColorizer() {
       statusText.value = prepared.errors[0] ?? "A referenced preset does not exist.";
       void Promise.all([
         storageWrite,
-        sdk.backend.setSettings(prepared.backend),
+        sdk.backend.setSettings(prepared.backend, currentProjectId.value),
       ]).catch((error: unknown) => {
         if (revision !== applyRevision) return;
         statusText.value = error instanceof Error ? error.message : String(error);
@@ -463,11 +259,12 @@ export function useColorizer() {
     statusText.value = "Re-evaluating HTTP History…";
     const progressPoller = setInterval(() => void updateProgress(revision), 250);
     void updateProgress(revision);
-    void runColorizing(prepared.backend, revision, storageWrite, progressPoller);
+    void runColorizing(prepared.backend, currentProjectId.value, revision, storageWrite, progressPoller);
   }
 
   async function runColorizing(
     snapshot: Settings,
+    projectId: string,
     revision: number,
     storageWrite: Promise<void>,
     progressPoller: ReturnType<typeof setInterval>,
@@ -475,10 +272,10 @@ export function useColorizer() {
     try {
       await Promise.all([
         storageWrite,
-        sdk.backend.setSettings(snapshot),
+        sdk.backend.setSettings(snapshot, projectId),
       ]);
       if (revision !== applyRevision) return;
-      const result: ApplyResult = await sdk.backend.recolorize();
+      const result: ApplyResult = await sdk.backend.recolorize(projectId);
       if (revision !== applyRevision || result.cancelled) return;
       if (result.errors.length > 0) {
         statusText.value = `Colored ${result.colored} request${result.colored === 1 ? "" : "s"}, removed color from ${result.cleared} row${result.cleared === 1 ? "" : "s"}. ${result.errors.length} error(s) — see Caido logs.`;
@@ -504,12 +301,15 @@ export function useColorizer() {
   }
 
   function handleProjectChange(projectId: string | undefined) {
-    captureProjectEnabledState();
-    currentProjectId = projectId ?? null;
-    if (currentProjectId && !enabledByProject[currentProjectId]) {
-      enabledByProject[currentProjectId] = {};
-    }
-    applyProjectEnabledState(currentProjectId);
+    if ((projectId ?? null) === currentProjectId.value) return;
+    const storageWrite = queueStorageWrite(snapshotSettings());
+    void storageWrite.catch((error: unknown) => sdk.log.error(`[HTTPQL Colorizer] Failed to save project settings: ${String(error)}`));
+    project.value = projectId ? new Project(projectId, storedSettings.value.settingsByProject[projectId]) : null;
+    selectedId.value = settings.value.rules[0]?.id ?? null;
+    validation.value = null;
+    finishRuleDrag();
+    finishGroupDrag();
+    copySourceProjectId.value = "";
     applyRevision += 1;
     recoloringRuleNames.value = [];
     progress.value = { active: false, current: 0, total: 0, phase: "idle" };
@@ -518,48 +318,24 @@ export function useColorizer() {
   }
 
   async function load() {
-    const backendStatus = await sdk.backend.getBackendStatus();
-    currentProjectId = backendStatus.projectId;
-    const stored = sdk.storage.get() as StoredSettings | undefined;
-    if (stored && Array.isArray(stored.rules)) {
-      const groups = Array.isArray(stored.groups) ? stored.groups : [];
-      const groupIds = new Set(groups.map((group) => group.id));
-      settings.value = {
-        enabled: true,
-        groups,
-        rules: stored.rules.map((rule) => ({
-          ...rule,
-          groupId: rule.groupId && groupIds.has(rule.groupId) ? rule.groupId : null,
-        })),
-      };
-      enabledByProject = stored.enabledByProject
-        ? structuredClone(stored.enabledByProject)
-        : {};
-      if (currentProjectId && !enabledByProject[currentProjectId]) {
-        enabledByProject[currentProjectId] = Object.fromEntries(
-          settings.value.rules.map((rule) => [rule.id, rule.enabled]),
-        );
-      }
-      applyProjectEnabledState(currentProjectId);
-    } else {
-      newRule();
-      captureProjectEnabledState();
-    }
-    selectedId.value = settings.value.rules[0]?.id ?? null;
-    saveSettings();
+    let projectChanged = false;
     projectListener = sdk.projects.onCurrentProjectChange((event) => {
+      projectChanged = true;
       handleProjectChange(event.projectId);
     });
+    const stored = sdk.storage.get() as StoredSettings | undefined;
+    storedSettings.value = { settingsByProject: stored?.settingsByProject ?? {} };
+    const backendStatus = await sdk.backend.getBackendStatus();
+    if (!projectChanged) handleProjectChange(backendStatus.projectId ?? undefined);
   }
 
   onMounted(() => void load());
   onBeforeUnmount(() => projectListener?.stop());
-  return { settings, selectedId, recoloringRuleNames, statusText, validation,
-    selectedRule, ruleSections, progress, progressPercent, draggedRuleId,
-    draggedGroupId, dropTargetRuleId, dropTargetGroupId, dropPosition,
-    groupOrderTargetId, groupDropPosition, newRule, newGroup,
-    removeRule, groupAllEnabled, toggleGroup, startRuleDrag,
-    updateRuleDropTarget, updateSectionDropTarget, finishRuleDrag, dropRule,
-    handleSectionDrop, startGroupDrag, finishGroupDrag, validate, selectPreset, saveSettings,
-    triggerColorizing };
+  return {
+    ...drag, settings, selectedId, recoloringRuleNames, statusText, validation,
+    selectedRule, ruleSections, progress, progressPercent, newRule, newGroup,
+    removeRule, removeGroup, groupAllEnabled, toggleGroup, validate, selectPreset, saveSettings,
+    triggerColorizing, currentProjectId, copyProjects, copyLoading, copyError,
+    copySourceProjectId, loadCopyProjects, copyRules,
+  };
 }

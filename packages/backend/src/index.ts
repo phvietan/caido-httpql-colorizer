@@ -5,6 +5,7 @@ import type { API } from "shared";
 import { ensureDatabase } from "./db";
 import {
   getBackendStatus,
+  getProjects,
   onInterceptResponse,
   recolorize,
   setActiveProject,
@@ -20,6 +21,7 @@ export async function init(sdk: SDK) {
   api.register("recolorize", recolorize);
   api.register("validateHttpql", validateHttpql);
   api.register("getBackendStatus", getBackendStatus);
+  api.register("getProjects", getProjects);
   const currentProject = await sdk.projects.getCurrent();
   setActiveProject(currentProject ? String(currentProject.getId()) : null);
   sdk.events.onProjectChange((_sdk, project) => {

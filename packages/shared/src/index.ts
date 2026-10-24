@@ -1,4 +1,8 @@
 export { mapWithConcurrency } from "./concurrency";
+export { Setting } from "./Setting";
+export { Project } from "./Project";
+export type { StoredSettings } from "./Project";
+export { normalizeHex } from "./helpers";
 
 export type ColorRule = {
   id: string;
@@ -39,8 +43,9 @@ export type ApplyProgress = {
 };
 
 export type API = {
-  setSettings(settings: Settings): void;
-  recolorize(): Promise<ApplyResult>;
+  getProjects(): Promise<Array<{ id: string; name: string }>>;
+  setSettings(settings: Settings, projectId: string | null): void;
+  recolorize(projectId: string): Promise<ApplyResult>;
   validateHttpql(query: string): Promise<ValidationResult>;
   getBackendStatus(): Promise<{
     initialized: boolean;
