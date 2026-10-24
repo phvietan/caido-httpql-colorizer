@@ -2,7 +2,7 @@ export { mapWithConcurrency } from "./concurrency";
 export { Setting } from "./Setting";
 export { Project } from "./Project";
 export type { StoredSettings } from "./Project";
-export { normalizeHex } from "./helpers";
+export { normalizeHex, colorsEqual, cancelledResult } from "./helpers";
 
 export type ColorRule = {
   id: string;

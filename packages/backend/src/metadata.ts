@@ -4,10 +4,14 @@ import type { SDK } from "caido:plugin";
 import { mapWithConcurrency } from "shared";
 
 const metadataQuery = `query getRequestMetadata($id: ID!) { request(id: $id) { metadata { id color } } }`;
-export const MUTATION_BATCH_SIZE = 20;
+export const MUTATION_BATCH_SIZE = 50;
 export const MUTATION_CONCURRENCY = 10;
 
-export type ColorUpdate = { requestId: string; metadataId: string; color: string };
+export type ColorUpdate = {
+  requestId: string;
+  metadataId: string;
+  color: string;
+};
 export type RequestMetadata = { id: string; color: string | null };
 export type ColorFailure = { requestId: string; error: string };
 export type ColorUpdateResult = { failures: ColorFailure[] };
@@ -17,7 +21,9 @@ export async function getMetadata(
   requestId: string,
 ): Promise<RequestMetadata | null> {
   const result = await sdk.graphql.execute<{
-    request?: { metadata?: { id?: string | null; color?: string | null } | null } | null;
+    request?: {
+      metadata?: { id?: string | null; color?: string | null } | null;
+    } | null;
   }>(metadataQuery, { id: requestId });
   if (result.errors?.length)
     throw new Error(result.errors.map((error) => error.message).join("; "));
@@ -40,15 +46,13 @@ export async function getMetadataWithRetry(
       lastError = error;
     }
     if (attempt < 5) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, 50 * (attempt + 1)),
+      );
     }
   }
   if (lastError) throw lastError;
   return null;
-}
-
-export function colorsEqual(current: string | null, desired: string): boolean {
-  return String(current ?? "").toUpperCase() === desired.toUpperCase();
 }
 
 export async function setRequestColors(
@@ -70,19 +74,34 @@ export async function setRequestColors(
         variables[`input${index}`] = { color: update.color };
         return `$metadataId${index}: ID!, $input${index}: UpdateRequestMetadataInput!`;
       });
-      const mutations = batch.map((_, index) => `update_${index}: updateRequestMetadata(id: $metadataId${index}, input: $input${index}) { metadata { id color } }`).join("\n");
+      const mutations = batch
+        .map(
+          (_, index) =>
+            `update_${index}: updateRequestMetadata(id: $metadataId${index}, input: $input${index}) { metadata { id color } }`,
+        )
+        .join("\n");
       const mutation = `mutation BatchUpdate(${definitions.join(", ")}) { ${mutations} }`;
       try {
-        const result = await sdk.graphql.execute<Record<string, unknown>>(mutation, variables);
-        const graphQLError = result.errors?.map((error) => error.message).join("; ");
+        const result = await sdk.graphql.execute<Record<string, unknown>>(
+          mutation,
+          variables,
+        );
+        const graphQLError = result.errors
+          ?.map((error) => error.message)
+          .join("; ");
         batch.forEach((update, index) => {
           if (graphQLError || !result.data?.[`update_${index}`]) {
-            failures.push({ requestId: update.requestId, error: graphQLError ?? "Caido returned no update result." });
+            failures.push({
+              requestId: update.requestId,
+              error: graphQLError ?? "Caido returned no update result.",
+            });
           }
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        batch.forEach((update) => failures.push({ requestId: update.requestId, error: message }));
+        batch.forEach((update) =>
+          failures.push({ requestId: update.requestId, error: message }),
+        );
       }
       return failures;
     },

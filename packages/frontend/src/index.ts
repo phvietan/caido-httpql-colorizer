@@ -9,12 +9,7 @@ export async function init(sdk: Caido<API>) {
 
   const root = document.createElement("div");
   root.id = "httpql-colorizer-root";
-  Object.assign(root.style, {
-    height: "100%",
-    width: "100%",
-    minHeight: "0",
-    overflow: "hidden",
-  });
+  root.className = "hc-h-full hc-w-full hc-min-h-0 hc-overflow-hidden";
 
   const app = createApp(App);
   app.mount(root);

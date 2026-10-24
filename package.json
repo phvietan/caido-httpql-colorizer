@@ -17,7 +17,7 @@
   "bugs": {
     "url": "https://github.com/phvietan/caido-httpql-colorizer/issues"
   },
-  "packageManager": "pnpm@9.15.0",
+  "packageManager": "pnpm@10.34.7",
   "scripts": {
     "build": "caido-dev build",
     "watch": "caido-dev watch",
@@ -27,9 +27,12 @@
     "@caido-community/dev": "latest",
     "@caido/sdk-frontend": "latest",
     "@caido/sdk-shared": "latest",
-    "@vitejs/plugin-vue": "latest",
+    "@caido/tailwindcss": "0.1.0",
+    "@types/node": "^24.19.2",
+    "@vitejs/plugin-vue": "5.2.4",
+    "tailwindcss": "3.4.13",
     "typescript": "latest",
-    "vite": "latest",
+    "vite": "6.0.7",
     "vue": "latest"
   }
 }

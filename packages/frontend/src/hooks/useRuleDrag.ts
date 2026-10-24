@@ -2,7 +2,11 @@ import { ref } from "vue";
 import type { Ref } from "vue";
 import type { Setting } from "shared";
 
-export function useRuleDrag(settings: Ref<Setting>, selectedId: Ref<string | null>, saveSettings: () => void) {
+export function useRuleDrag(
+  settings: Ref<Setting>,
+  selectedId: Ref<string | null>,
+  saveSettings: () => void,
+) {
   const draggedRuleId = ref<string | null>(null);
   const draggedGroupId = ref<string | null>(null);
   const dropTargetRuleId = ref<string | null>(null);
@@ -33,9 +37,8 @@ export function useRuleDrag(settings: Ref<Setting>, selectedId: Ref<string | nul
     const bounds = target.getBoundingClientRect();
     dropTargetRuleId.value = ruleId;
     dropTargetGroupId.value = undefined;
-    dropPosition.value = event.clientY < bounds.top + bounds.height / 2
-      ? "before"
-      : "after";
+    dropPosition.value =
+      event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   }
 
@@ -54,14 +57,18 @@ export function useRuleDrag(settings: Ref<Setting>, selectedId: Ref<string | nul
       return;
     }
 
-    const sourceIndex = settings.value.rules.findIndex((rule) => rule.id === sourceId);
+    const sourceIndex = settings.value.rules.findIndex(
+      (rule) => rule.id === sourceId,
+    );
     const targetRule = settings.value.rules.find((rule) => rule.id === ruleId);
     if (sourceIndex < 0 || !targetRule) {
       finishRuleDrag();
       return;
     }
     const [rule] = settings.value.rules.splice(sourceIndex, 1);
-    const targetIndex = settings.value.rules.findIndex((item) => item.id === ruleId);
+    const targetIndex = settings.value.rules.findIndex(
+      (item) => item.id === ruleId,
+    );
     if (!rule || targetIndex < 0) {
       finishRuleDrag();
       return;
@@ -111,10 +118,7 @@ export function useRuleDrag(settings: Ref<Setting>, selectedId: Ref<string | nul
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
   }
 
-  function updateSectionDropTarget(
-    sectionId: string | null,
-    event: DragEvent,
-  ) {
+  function updateSectionDropTarget(sectionId: string | null, event: DragEvent) {
     if (!draggedGroupId.value) {
       updateGroupDropTarget(sectionId);
       return;
@@ -127,8 +131,8 @@ export function useRuleDrag(settings: Ref<Setting>, selectedId: Ref<string | nul
     const target = event.currentTarget as HTMLElement;
     const bounds = target.getBoundingClientRect();
     groupOrderTargetId.value = sectionId;
-    groupDropPosition.value = sectionId === null ||
-      event.clientY < bounds.top + bounds.height / 2
+    groupDropPosition.value =
+      sectionId === null || event.clientY < bounds.top + bounds.height / 2
         ? "before"
         : "after";
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
@@ -187,8 +191,20 @@ export function useRuleDrag(settings: Ref<Setting>, selectedId: Ref<string | nul
   }
 
   return {
-    draggedRuleId, draggedGroupId, dropTargetRuleId, dropTargetGroupId, dropPosition,
-    groupOrderTargetId, groupDropPosition, startRuleDrag, updateRuleDropTarget, finishRuleDrag,
-    dropRule, handleSectionDrop, startGroupDrag, finishGroupDrag, updateSectionDropTarget,
+    draggedRuleId,
+    draggedGroupId,
+    dropTargetRuleId,
+    dropTargetGroupId,
+    dropPosition,
+    groupOrderTargetId,
+    groupDropPosition,
+    startRuleDrag,
+    updateRuleDropTarget,
+    finishRuleDrag,
+    dropRule,
+    handleSectionDrop,
+    startGroupDrag,
+    finishGroupDrag,
+    updateSectionDropTarget,
   };
 }

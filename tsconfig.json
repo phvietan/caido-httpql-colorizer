@@ -9,10 +9,10 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "baseUrl": ".",
+    "types": ["node"],
     "paths": {
-      "shared": ["packages/shared/src/index.ts"]
+      "shared": ["./packages/shared/src/index.ts"]
     }
   },
-  "include": ["packages/**/*.ts", "packages/**/*.vue", "caido.config.ts"]
+  "include": ["packages/**/*.ts", "packages/**/*.vue", "caido.config.ts", "tailwind.config.ts"]
 }

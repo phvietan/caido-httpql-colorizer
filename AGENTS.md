@@ -4,9 +4,11 @@ This file contains repository-specific instructions for contributors and coding 
 
 ## Development
 
-Requirements: Node.js 20+, Corepack, and pnpm 9.
+Requirements: nvm, Node.js 24.22.1 (pinned in `.nvmrc`), Corepack, and pnpm 10 (pinned in `package.json`).
 
 ```bash
+nvm install
+nvm use
 corepack enable
 pnpm install
 pnpm watch

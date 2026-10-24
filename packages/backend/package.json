@@ -5,5 +5,8 @@
   "main": "src/index.ts",
   "dependencies": {
     "shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@caido/sdk-backend": "0.58.3"
   }
 }

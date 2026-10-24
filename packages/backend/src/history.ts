@@ -2,7 +2,7 @@
 
 import type { SDK } from "caido:plugin";
 import type { Settings, ApplyResult, ApplyProgress } from "shared";
-import { mapWithConcurrency } from "shared";
+import { mapWithConcurrency, colorsEqual, cancelledResult } from "shared";
 import {
   forgetColoredRequests,
   ownedRequestIds,
@@ -10,7 +10,6 @@ import {
 } from "./db";
 import {
   getMetadata,
-  colorsEqual,
   setRequestColors,
   MUTATION_BATCH_SIZE,
   MUTATION_CONCURRENCY,
@@ -33,14 +32,6 @@ export let progress: ApplyProgress = {
 
 export function resetProgress(): void {
   progress = { active: false, current: 0, total: 0, phase: "idle" };
-}
-
-export function cancelledResult(
-  cleared = 0,
-  errors: string[] = [],
-  colored = 0,
-): ApplyResult {
-  return { colored, cleared, errors: errors.slice(0, 20), cancelled: true };
 }
 
 async function executeColorActions(
@@ -174,43 +165,42 @@ export async function reapplyExistingHistory(
     if (isCancelled()) return cancelledResult();
     const desired = new Map<string, ColorAction>();
     const errors: string[] = [];
-    if (snapshot.enabled) {
-      for (const rule of snapshot.rules) {
-        if (!rule.enabled || !rule.httpql) continue;
-        let cursor: string | null = null;
-        while (true) {
-          try {
-            let query = sdk.requests
-              .query()
-              .filter(rule.httpql)
-              // Caido displays the newest history entries at the top. Query in
-              // the same order so visible rows are recolored from top to bottom.
-              .descending("req", "created_at")
-              .first(PAGE_SIZE);
-            if (cursor) query = query.after(cursor);
-            const page = await query.execute();
-            if (isCancelled()) return cancelledResult(0, errors);
-            for (const item of page.items) {
-              const requestId = String(item.request.getId());
-              if (!desired.has(requestId)) {
-                desired.set(requestId, {
-                  requestId,
-                  color: rule.color,
-                  ruleName: rule.name,
-                });
-              }
+    for (const rule of snapshot.rules) {
+      if (!rule.enabled || !rule.httpql) continue;
+      let cursor: string | null = null;
+      while (true) {
+        try {
+          let query = sdk.requests
+            .query()
+            .filter(rule.httpql)
+            // Caido displays the newest history entries at the top. Query in
+            // the same order so visible rows are recolored from top to bottom.
+            .descending("req", "created_at")
+            .first(PAGE_SIZE);
+          if (cursor) query = query.after(cursor);
+          const page = await query.execute();
+          if (isCancelled()) return cancelledResult(0, errors);
+          for (const item of page.items) {
+            const requestId = String(item.request.getId());
+            if (!desired.has(requestId)) {
+              desired.set(requestId, {
+                requestId,
+                color: rule.color,
+                ruleName: rule.name,
+              });
             }
-            if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) break;
-            cursor = page.pageInfo.endCursor;
-          } catch (error) {
-            errors.push(
-              `Rule "${rule.name}": ${error instanceof Error ? error.message : String(error)}`,
-            );
-            break;
           }
+          if (!page.pageInfo.hasNextPage || !page.pageInfo.endCursor) break;
+          cursor = page.pageInfo.endCursor;
+        } catch (error) {
+          errors.push(
+            `Rule "${rule.name}": ${error instanceof Error ? error.message : String(error)}`,
+          );
+          break;
         }
       }
     }
+
     const desiredIds = new Set(desired.keys());
     const staleIds = new Set([...ownedIds].filter((id) => !desiredIds.has(id)));
     const actions: ColorAction[] = [

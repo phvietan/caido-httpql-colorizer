@@ -1,23 +1,15 @@
 /// <reference types="@caido/sdk-backend" />
 
 import type { SDK } from "caido:plugin";
-import { forEachBatch } from "./batches";
 
 const TABLE = "httpql_colorizer_owned_by_project";
+const MAX_BATCH_ITEMS = 1_000;
 
 export async function ensureDatabase(sdk: SDK): Promise<void> {
   const db = await sdk.meta.db();
   await db.exec(
     `CREATE TABLE IF NOT EXISTS ${TABLE} (project_id TEXT NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(project_id, request_id));`,
   );
-}
-
-export async function rememberColoredRequest(
-  sdk: SDK,
-  projectId: string,
-  requestId: string,
-): Promise<void> {
-  await rememberColoredRequests(sdk, projectId, [requestId]);
 }
 
 export async function rememberColoredRequests(
@@ -32,15 +24,25 @@ export async function rememberColoredRequests(
     const statement = await db.prepare(
       `INSERT OR IGNORE INTO ${TABLE}(project_id, request_id) VALUES ${values}`,
     );
-    const params = batch.flatMap((requestId) => [String(projectId), String(requestId)]);
+    const params = batch.flatMap((requestId) => [
+      String(projectId),
+      String(requestId),
+    ]);
     await statement.run(...params);
   });
 }
 
-export async function ownedRequestIds(sdk: SDK, projectId: string): Promise<string[]> {
+export async function ownedRequestIds(
+  sdk: SDK,
+  projectId: string,
+): Promise<string[]> {
   const db = await sdk.meta.db();
-  const statement = await db.prepare(`SELECT request_id FROM ${TABLE} WHERE project_id = ?`);
-  const rows = (await statement.all(String(projectId))) as Array<{ request_id: string }>;
+  const statement = await db.prepare(
+    `SELECT request_id FROM ${TABLE} WHERE project_id = ?`,
+  );
+  const rows = (await statement.all(String(projectId))) as Array<{
+    request_id: string;
+  }>;
   return rows.map((row) => String(row.request_id));
 }
 
@@ -58,4 +60,15 @@ export async function forgetColoredRequests(
     );
     await statement.run(String(projectId), ...batch.map(String));
   });
+}
+
+async function forEachBatch<T>(
+  items: readonly T[],
+  operation: (batch: readonly T[]) => Promise<void>,
+  maxItems = MAX_BATCH_ITEMS,
+): Promise<void> {
+  const batchSize = Math.min(Math.max(1, maxItems), MAX_BATCH_ITEMS);
+  for (let start = 0; start < items.length; start += batchSize) {
+    await operation(items.slice(start, start + batchSize));
+  }
 }

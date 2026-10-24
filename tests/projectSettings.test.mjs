@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { webcrypto } from "node:crypto";
 import { transformWithEsbuild } from "vite";
 import * as Vue from "vue";
 import { parse, compileScript } from "vue/compiler-sfc";
@@ -13,25 +14,27 @@ async function compile(path, format = "esm") {
 }
 const moduleUrl = (code) => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
 const helpersUrl = moduleUrl(await compile("../packages/shared/src/helpers.ts"));
-const backendHelpers = await import(helpersUrl);
+const sharedHelpers = await import(helpersUrl);
 const settingUrl = moduleUrl((await compile("../packages/shared/src/Setting.ts")).replace('"./helpers"', JSON.stringify(helpersUrl)));
 const { Setting } = await import(settingUrl);
 const { Project } = await import(moduleUrl((await compile("../packages/shared/src/Project.ts")).replace('"./Setting"', JSON.stringify(settingUrl))));
 const { mapWithConcurrency } = await import(moduleUrl(await compile("../packages/shared/src/concurrency.ts")));
-const shared = { Project, Setting, mapWithConcurrency };
-const composable = await compile("../packages/frontend/src/useColorizer.ts", "cjs");
-const dragCode = await compile("../packages/frontend/src/useRuleDrag.ts", "cjs");
+const shared = { Project, Setting, mapWithConcurrency, ...sharedHelpers };
+const projectsCode = await compile("../packages/frontend/src/hooks/useProjectSettings.ts", "cjs");
+const recolorizeCode = await compile("../packages/frontend/src/hooks/useRecolorize.ts", "cjs");
+const rulesCode = await compile("../packages/frontend/src/hooks/useRules.ts", "cjs");
+const dialogsCode = await compile("../packages/frontend/src/dialogs.ts", "cjs");
+const dragCode = await compile("../packages/frontend/src/hooks/useRuleDrag.ts", "cjs");
 const presets = await import(moduleUrl(await compile("../packages/frontend/src/presets.ts")));
 const backend = await compile("../packages/backend/src/rpc.ts", "cjs");
 const metadataCode = await compile("../packages/backend/src/metadata.ts", "cjs");
 const historyCode = await compile("../packages/backend/src/history.ts", "cjs");
 const databaseCode = await compile("../packages/backend/src/db.ts", "cjs");
-const batchesCode = await compile("../packages/backend/src/batches.ts", "cjs");
 const startupCode = await compile("../packages/backend/src/index.ts", "cjs");
 
 function evaluate(code, imports) {
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, exports: module.exports, setTimeout,
+  vm.runInNewContext(code, { module, exports: module.exports, setTimeout, clearTimeout, setInterval, clearInterval, crypto: webcrypto,
     require(name) {
       if (!(name in imports)) throw new Error(`Unexpected import ${name}`);
       return imports[name];
@@ -40,13 +43,25 @@ function evaluate(code, imports) {
   return module.exports;
 }
 
+async function loadComponent(name) {
+  const source = readFileSync(new URL("../packages/frontend/src/components/" + name, import.meta.url), "utf8");
+  const { descriptor } = parse(source);
+  const script = compileScript(descriptor, { id: name, inlineTemplate: true });
+  const { code } = await transformWithEsbuild(script.content, name + ".ts", { format: "cjs" });
+  return evaluate(code, { vue: Vue }).default;
+}
+const BaseButton = await loadComponent("BaseButton.vue");
+const componentImports = { vue: Vue, "./BaseButton.vue": { default: BaseButton, __esModule: true } };
+
 function loadBackend(db = {}) {
   const metadata = evaluate(metadataCode, { shared });
   const history = evaluate(historyCode, { shared, "./metadata": metadata, "./db": db });
-  return evaluate(backend, { shared, "./metadata": metadata, "./history": history, "./db": db });
+  return evaluate(backend, { shared, "./metadata": metadata, "./history": history, "./db": db }).RPC;
 }
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const flush = () => new Promise(setImmediate);
+const scopes = [];
+test.afterEach(() => { for (const scope of scopes.splice(0)) scope.stop(); });
 const original = {
   enabled: true,
   groups: [{ id: "g", name: "API" }],
@@ -57,16 +72,32 @@ const original = {
 };
 
 test("hex normalization trims, uppercases, and defaults invalid colors", () => {
-  assert.equal(backendHelpers.normalizeHex(" #a1b2c3 "), "#A1B2C3");
-  assert.equal(backendHelpers.normalizeHex("red"), "#185A6C");
-  assert.equal(backendHelpers.normalizeHex("#abc"), "#185A6C");
+  assert.equal(sharedHelpers.normalizeHex(" #a1b2c3 "), "#A1B2C3");
+  assert.equal(sharedHelpers.normalizeHex("red"), "#185A6C");
+  assert.equal(sharedHelpers.normalizeHex("#abc"), "#185A6C");
+});
+
+test("shared color comparison preserves case-insensitive matching and empty-color clearing", () => {
+  assert.equal(sharedHelpers.colorsEqual("#aabbcc", "#AABBCC"), true);
+  assert.equal(sharedHelpers.colorsEqual("#aabbcc", "#112233"), false);
+  assert.equal(sharedHelpers.colorsEqual(null, ""), true);
+  assert.equal(sharedHelpers.colorsEqual(null, "#185A6C"), false);
+});
+
+test("shared cancellation results preserve counts and cap errors", () => {
+  const errors = Array.from({ length: 25 }, (_, index) => `Error ${index}`);
+  const result = sharedHelpers.cancelledResult(3, errors, 7);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.cleared, 3);
+  assert.equal(result.colored, 7);
+  assert.equal(result.errors.length, 20);
+  assert.equal(errors.length, 25);
 });
 
 test("backend startup initializes the table before handlers and CRUD never repeats initialization", async () => {
-  const batches = evaluate(batchesCode, {});
-  const db = evaluate(databaseCode, { "./batches": batches });
+  const db = evaluate(databaseCode, {});
   const rpc = loadBackend(db);
-  const { init } = evaluate(startupCode, { "./db": db, "./rpc": rpc });
+  const { init } = evaluate(startupCode, { shared, "./db": db, "./rpc": { RPC: rpc } });
   const order = [];
   const sdk = {
     meta: { db: async () => ({
@@ -80,7 +111,7 @@ test("backend startup initializes the table before handlers and CRUD never repea
   };
   await init(sdk);
   assert.equal(order[0], "initialize");
-  await db.rememberColoredRequest(sdk, "A", "r1");
+  await db.rememberColoredRequests(sdk, "A", ["r1"]);
   await db.rememberColoredRequests(sdk, "A", ["r2", "r3"]);
   assert.deepEqual(plain(await db.ownedRequestIds(sdk, "A")), ["r1"]);
   await db.forgetColoredRequests(sdk, "A", ["r1"]);
@@ -89,6 +120,36 @@ test("backend startup initializes the table before handlers and CRUD never repea
   sdk.meta.db = async () => { throw new Error("Database unavailable"); };
   await assert.rejects(init(sdk), /Database unavailable/);
   assert.equal(order.length, 0);
+});
+
+test("API registration normalizes settings into a Project before calling the RPC handler", async () => {
+  const rpc = loadBackend();
+  const { init } = evaluate(startupCode, {
+    shared, "./db": { ensureDatabase: async () => {} }, "./rpc": { RPC: rpc },
+  });
+  const handlers = {};
+  let received;
+  const setSettings = rpc.setSettings;
+  rpc.setSettings = (project) => { received = project; setSettings(project); };
+  const sdk = {
+    api: { register: (name, handler) => { handlers[name] = handler; } },
+    projects: { getCurrent: async () => ({ getId: () => "A" }) },
+    events: { onProjectChange() {}, onInterceptResponse() {} }, console: { log() {} },
+  };
+  await init(sdk);
+  const input = plain(original);
+  input.rules[0].color = " #aabbcc ";
+  input.rules[0].httpql = ' req.host.eq:"example.com" ';
+  handlers.setSettings(sdk, input, "A");
+  assert.ok(received instanceof Project);
+  assert.ok(received.setting instanceof Setting);
+  assert.equal(received.setting.rules[0].color, "#AABBCC");
+  assert.equal(received.setting.rules[0].httpql, 'req.host.eq:"example.com"');
+  assert.equal((await handlers.getBackendStatus(sdk)).ruleCount, 2);
+  received = undefined;
+  handlers.setSettings(sdk, input, null);
+  assert.equal(received, undefined);
+  assert.equal(input.rules[0].color, " #aabbcc ");
 });
 
 test("settings serialize as plain data and project instances own independent settings", () => {
@@ -163,6 +224,7 @@ function mount(stored, projectId = "A", statusPromise) {
       getBackendStatus: () => statusPromise ?? Promise.resolve({ projectId }),
       setSettings: async (settings, id) => { backendWrites.push({ settings: plain(settings), id }); },
       getProjects: async () => [{ id: "A", name: "Project A" }],
+      validateHttpql: async () => ({ ok: true }),
     },
     filters: { getAll: () => [] },
     projects: { onCurrentProjectChange: (callback) => { listener = callback; return { stop() {} }; } },
@@ -170,13 +232,21 @@ function mount(stored, projectId = "A", statusPromise) {
     log: { error() {} }, window: { showToast() {} },
   };
   const vue = {
-    ref: (value) => ({ value }), computed: (fn) => ({ get value() { return fn(); } }),
+    ...Vue,
     onMounted: (fn) => { mounted = fn; }, onBeforeUnmount() {},
   };
   const drag = evaluate(dragCode, { vue });
-  const app = evaluate(composable, { vue, shared, "./sdk": { useSDK: () => sdk }, "./useRuleDrag": drag, "./presets": presets }).useColorizer();
+  const imports = { vue, shared, "../sdk": { useSDK: () => sdk }, "../presets": presets, "./useRuleDrag": drag };
+  const scope = Vue.effectScope();
+  scopes.push(scope);
+  const app = scope.run(() => {
+    const projects = evaluate(projectsCode, imports).useProjectSettings();
+    const colorizing = evaluate(recolorizeCode, imports).useRecolorize(projects);
+    const rules = evaluate(rulesCode, imports).useRules(projects, colorizing);
+    return { ...projects, ...colorizing, ...rules, ...rules.drag };
+  });
   mounted();
-  return { app, sdk, writes, backendWrites, change: (id) => listener({ projectId: id }) };
+  return { app, sdk, writes, backendWrites, unmount: () => scope.stop(), change: (id) => listener({ projectId: id }) };
 }
 
 test("switching projects saves edits, starts new projects empty, and restores previous rules", async () => {
@@ -260,6 +330,92 @@ test("no other project with rules skips the backend lookup and immediately leave
   assert.equal(app.copySourceProjectId.value, "");
 });
 
+test("project switches invalidate pending copy lookups without overwriting a newer lookup", async () => {
+  const { app, sdk, change } = mount({ settingsByProject: { A: plain(original) } }, "B");
+  await flush();
+  let rejectOld, resolveNew;
+  sdk.backend.getProjects = () => new Promise((_resolve, reject) => { rejectOld = reject; });
+  const oldLookup = app.loadCopyProjects();
+  assert.equal(app.copyLoading.value, true);
+  change("C");
+  assert.equal(app.copyLoading.value, false);
+  sdk.backend.getProjects = () => new Promise((resolve) => { resolveNew = resolve; });
+  const newLookup = app.loadCopyProjects();
+  rejectOld(new Error("Old project disconnected"));
+  await oldLookup;
+  assert.equal(app.copyError.value, "");
+  assert.equal(app.copyLoading.value, true);
+  resolveNew([{ id: "A", name: "Project A" }]);
+  await newLookup;
+  assert.equal(app.copyLoading.value, false);
+  assert.equal(app.copyProjects.value[0].name, "Project A");
+});
+
+test("SDK dialogs render buttons and loading updates with a separate host Vue runtime", async () => {
+  const HostVue = vm.runInNewContext(readFileSync(new URL("../node_modules/vue/dist/vue.global.prod.js", import.meta.url), "utf8") + ";Vue", { console });
+  const node = (type, text = "") => ({ type, text, children: [], parent: null, props: {} });
+  const remove = (child) => {
+    const siblings = child.parent?.children;
+    if (siblings) siblings.splice(siblings.indexOf(child), 1);
+    child.parent = null;
+  };
+  const host = {
+    insert(child, parent, anchor) {
+      remove(child);
+      const index = anchor ? parent.children.indexOf(anchor) : -1;
+      parent.children.splice(index < 0 ? parent.children.length : index, 0, child);
+      child.parent = parent;
+    },
+    remove,
+    createElement: (type) => node(type),
+    createText: (text) => node("#text", text),
+    createComment: (text) => node("#comment", text),
+    setText: (element, text) => { element.text = text; },
+    setElementText: (element, text) => { element.text = text; element.children = []; },
+    parentNode: (element) => element.parent,
+    nextSibling: (element) => element.parent?.children[element.parent.children.indexOf(element) + 1],
+    patchProp: (element, key, _previous, value) => { element.props[key] = value; },
+  };
+  const local = Vue.createRenderer(host);
+  const external = HostVue.createRenderer(host);
+  const root = node("root");
+  const { app, sdk } = mount({ settingsByProject: { A: plain(original) } }, "B");
+  await flush();
+  let resolve;
+  sdk.backend.getProjects = () => new Promise((done) => { resolve = done; });
+  const lookup = app.loadCopyProjects();
+  const source = readFileSync(new URL("../packages/frontend/src/components/CopyRulesModal.vue", import.meta.url), "utf8");
+  const script = compileScript(parse(source).descriptor, { id: "copy-dialog", inlineTemplate: true });
+  const { code } = await transformWithEsbuild(script.content, "copy-dialog.ts", { format: "cjs" });
+  const CopyRulesModal = evaluate(code, componentImports).default;
+  let unmounts = 0;
+  const { showDialog } = evaluate(dialogsCode, {
+    vue: { ...Vue, createApp(component, props) {
+      const instance = local.createApp(component, props);
+      const unmount = instance.unmount;
+      instance.unmount = () => { unmounts += 1; unmount(); };
+      return instance;
+    } },
+    "./sdk": { useSDK: () => ({ window: { showDialog(definition) {
+      const instance = external.createApp(definition.component);
+      instance.mount(root);
+      return { close: () => instance.unmount() };
+    } } }) },
+  });
+  const dialog = showDialog(CopyRulesModal, { projectSettings: app }, { title: "Copy rules" });
+  const text = (element) => element.type === "#comment" ? "" : element.text + element.children.map(text).join("");
+  assert.match(text(root), /Loading projects/);
+  assert.match(text(root), /Close/);
+  resolve([]);
+  await lookup;
+  await Vue.nextTick();
+  assert.match(text(root), /No other project has rules yet/);
+  assert.doesNotMatch(text(root), /Loading projects/);
+  dialog.close();
+  assert.equal(unmounts, 1);
+  assert.equal(root.children.length, 0);
+});
+
 test("deleting any rule is immediate, preserves other selections, and saves only that project", async () => {
   const { app, writes } = mount({ settingsByProject: { A: plain(original), B: plain(original) } });
   await flush();
@@ -309,31 +465,151 @@ test("a project switch while loading wins over an older backend status response"
   assert.equal(result.app.settings.value.rules.length, 0);
 });
 
-test("validation results from the previous project are discarded", async () => {
+test("HTTPQL validation waits for 300 ms of idle typing and clears the previous status", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { app, sdk } = mount({ settingsByProject: { A: plain(original) } });
+  await flush();
+  const queries = [];
+  sdk.backend.validateHttpql = async (query) => {
+    queries.push(query);
+    return query === "invalid" ? { ok: false, error: "Invalid HTTPQL" } : { ok: true };
+  };
+  app.selectedRule.value.httpql = "first";
+  t.mock.timers.tick(200);
+  app.selectedRule.value.httpql = "latest";
+  t.mock.timers.tick(299);
+  assert.deepEqual(queries, []);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.deepEqual(queries, ["latest"]);
+  assert.equal(app.validation.value.ok, true);
+  app.selectedRule.value.httpql = "invalid";
+  assert.equal(app.validation.value, null);
+  t.mock.timers.tick(300);
+  await flush();
+  assert.equal(app.validation.value.ok, false);
+  assert.equal(app.validation.value.error, "Invalid HTTPQL");
+});
+
+test("older validation results cannot replace a newer query or another rule's status", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { app, sdk } = mount({ settingsByProject: { A: plain(original) } });
+  await flush();
+  const pending = [];
+  sdk.backend.validateHttpql = () => new Promise((resolve) => pending.push(resolve));
+  app.selectedId.value = "r2";
+  t.mock.timers.tick(300);
+  app.selectedRule.value.httpql = "new query";
+  t.mock.timers.tick(300);
+  pending[1]({ ok: false, error: "New query is invalid" });
+  await flush();
+  pending[0]({ ok: true });
+  await flush();
+  assert.equal(app.validation.value.error, "New query is invalid");
+  app.selectedRule.value.httpql = "third query";
+  t.mock.timers.tick(300);
+  app.selectedId.value = "r1";
+  pending[2]({ ok: true });
+  await flush();
+  assert.equal(app.validation.value, null);
+});
+
+test("validation results from the previous project are discarded", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { app, sdk, change } = mount({ settingsByProject: { A: plain(original) } });
   await flush();
   app.selectedId.value = "r2";
   let resolve;
   sdk.backend.validateHttpql = () => new Promise((done) => { resolve = done; });
-  const validation = app.validate();
+  t.mock.timers.tick(300);
   change("B");
   resolve({ ok: true });
-  await validation;
+  await flush();
   assert.equal(app.validation.value, null);
 });
 
-test("backend switches rule sets and rejects rescans belonging to another project", async () => {
+test("automatic validation reports missing presets and backend failures", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { app, sdk } = mount({ settingsByProject: { A: plain(original) } });
+  await flush();
+  let calls = 0;
+  sdk.backend.validateHttpql = async () => { calls += 1; throw new Error("Backend disconnected"); };
+  t.mock.timers.tick(300);
+  await flush();
+  assert.match(app.validation.value.error, /preset "API" does not exist/);
+  assert.equal(calls, 0);
+  app.selectedId.value = "r2";
+  t.mock.timers.tick(300);
+  await flush();
+  assert.match(app.validation.value.error, /Backend disconnected/);
+});
+
+test("unmount cancels pending validation and discards in-flight results", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const first = mount({ settingsByProject: { A: plain(original) } });
+  await flush();
+  first.app.selectedId.value = "r2";
+  first.sdk.backend.validateHttpql = () => assert.fail("Unmounted validation must not run");
+  first.unmount();
+  t.mock.timers.tick(300);
+  const second = mount({ settingsByProject: { A: plain(original) } });
+  await flush();
+  second.app.selectedId.value = "r2";
+  let resolve;
+  second.sdk.backend.validateHttpql = () => new Promise((done) => { resolve = done; });
+  t.mock.timers.tick(300);
+  second.unmount();
+  resolve({ ok: true });
+  await flush();
+  assert.equal(second.app.validation.value, null);
+});
+
+test("backend clears rules on project switches and waits for the frontend to supply settings", async () => {
   const rpc = loadBackend();
   rpc.setActiveProject("A");
-  rpc.setSettings({}, original, "A");
+  rpc.setSettings(new Project("A", Setting.normalize(original)));
   assert.equal((await rpc.getBackendStatus()).ruleCount, 2);
   rpc.setActiveProject("B");
   assert.equal((await rpc.getBackendStatus()).ruleCount, 0);
-  rpc.setSettings({}, original, "A");
+  rpc.setSettings(new Project("A", Setting.normalize(original)));
   assert.equal((await rpc.getBackendStatus()).ruleCount, 0);
   assert.equal((await rpc.recolorize({}, "A")).cancelled, true);
   rpc.setActiveProject("A");
+  assert.equal((await rpc.getBackendStatus()).ruleCount, 0);
+  rpc.setSettings(new Project("A", Setting.normalize(original)));
   assert.equal((await rpc.getBackendStatus()).ruleCount, 2);
+});
+
+test("recoloring results from the previous project do not overwrite the new project status", async () => {
+  const { app, sdk, change } = mount({ settingsByProject: { A: plain(original) } });
+  await flush();
+  sdk.filters.getAll = () => [{ name: "API", query: "resp.code.gte:400" }];
+  let resolve;
+  sdk.backend.recolorize = (id) => {
+    assert.equal(id, "A");
+    return new Promise((done) => { resolve = done; });
+  };
+  app.triggerColorizing();
+  await flush();
+  assert.equal(typeof resolve, "function");
+  change("B");
+  const status = app.statusText.value;
+  resolve({ colored: 99, cleared: 0, errors: [] });
+  await flush();
+  assert.equal(app.statusText.value, status);
+  assert.equal(app.progress.value.active, false);
+  assert.deepEqual(plain(app.recoloringRuleNames.value), []);
+});
+
+test("static RPC methods work as detached Caido callbacks", async () => {
+  const rpc = loadBackend();
+  rpc.setActiveProject("A");
+  const setSettings = rpc.setSettings;
+  const getBackendStatus = rpc.getBackendStatus;
+  const recolorize = rpc.recolorize;
+  setSettings(new Project("A", Setting.normalize(original)));
+  assert.equal((await getBackendStatus()).ruleCount, 2);
+  assert.equal((await recolorize({}, "B")).cancelled, true);
 });
 
 test("extracted rescan keeps first-match priority, clears stale colors, and records ownership", async () => {
@@ -344,9 +620,11 @@ test("extracted rescan keeps first-match priority, clears stale colors, and reco
     rememberColoredRequests: async (_sdk, projectId, ids) => remembered.push({ projectId, ids: plain(ids) }),
   });
   const rules = plain(original);
+  // Rescans use each rule's enabled flag, regardless of the unused master flag.
+  rules.enabled = false;
   rules.rules[1].enabled = true;
   rpc.setActiveProject("A");
-  rpc.setSettings({}, rules, "A");
+  rpc.setSettings(new Project("A", Setting.normalize(rules)));
   let queryCount = 0;
   const sdk = {
     requests: { query() {
@@ -383,7 +661,7 @@ test("extracted rescan keeps first-match priority, clears stale colors, and reco
 test("switching project during a rescan query cancels before color mutations", async () => {
   const rpc = loadBackend({ ownedRequestIds: async () => [] });
   rpc.setActiveProject("A");
-  rpc.setSettings({}, original, "A");
+  rpc.setSettings(new Project("A", Setting.normalize(original)));
   let resolve, mutations = 0;
   const sdk = {
     requests: { query: () => ({
@@ -404,7 +682,7 @@ test("switching project during a rescan query cancels before color mutations", a
 test("live coloring stops before mutation when the project changes during metadata lookup", async () => {
   const rpc = loadBackend();
   rpc.setActiveProject("A");
-  rpc.setSettings({}, original, "A");
+  rpc.setSettings(new Project("A", Setting.normalize(original)));
   let resolve, calls = 0;
   const sdk = {
     requests: { matches: () => true },
@@ -424,23 +702,23 @@ test("copy modal renders project descriptions and copies all rules without a gro
   const script = compileScript(descriptor, { id: "copy-rules-modal", inlineTemplate: true });
   const { code } = await transformWithEsbuild(script.content, "CopyRulesModal.ts", { format: "cjs" });
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, exports: module.exports, require: () => Vue });
+  vm.runInNewContext(code, { module, exports: module.exports, require: (name) => componentImports[name] });
   const colorizer = {
     copyProjects: Vue.ref([{ id: "A", name: "Project A", groupCount: 1, ruleCount: 2 }]),
     copySourceProjectId: Vue.ref("A"), copyRules() {},
     copyLoading: Vue.ref(false), copyError: Vue.ref(""), loadCopyProjects() {},
   };
-  const renderModal = module.exports.default.setup({ colorizer: Vue.reactive(colorizer) }, { expose() {}, emit() {} });
-  const render = () => renderToString(Vue.createSSRApp({ render: () => renderModal({}, []) }));
+  const renderModal = module.exports.default.setup({ projectSettings: Vue.reactive(colorizer) }, { expose() {}, emit() {} });
+  const render = async () => (await renderToString(Vue.createSSRApp({ render: () => renderModal({}, []) }))).replace(/<!--.*?-->/g, "");
   const html = await render();
   assert.match(html, /Project A — Groups: 1 · Rules: 2/);
   assert.doesNotMatch(html, /Group to copy/);
-  assert.match(html, /Copy all rules<\/button>/);
+  assert.match(html, />\s*Copy all rules\s*<\/button>/);
   assert.match(html, /Copied rules start disabled/);
   colorizer.copyProjects.value = [];
   const empty = await render();
   assert.match(empty, /No other project has rules yet/);
-  assert.doesNotMatch(empty, /Copy all rules<\/button>/);
+  assert.doesNotMatch(empty, />\s*Copy all rules\s*<\/button>/);
   colorizer.copyLoading.value = true;
   assert.match(await render(), /Loading projects/);
   colorizer.copyLoading.value = false;
@@ -466,13 +744,13 @@ test("group deletion modal names the group, counts its rules, and provides confi
   const script = compileScript(descriptor, { id: "delete-group-modal", inlineTemplate: true });
   const { code } = await transformWithEsbuild(script.content, "DeleteGroupModal.ts", { format: "cjs" });
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, exports: module.exports, require: () => Vue });
+  vm.runInNewContext(code, { module, exports: module.exports, require: (name) => componentImports[name] });
   for (const count of [0, 1, 3]) {
-    const html = await renderToString(Vue.createSSRApp(module.exports.default, { groupName: "API <test>", ruleCount: count }));
+    const html = (await renderToString(Vue.createSSRApp(module.exports.default, { groupName: "API <test>", ruleCount: count }))).replace(/<!--.*?-->/g, "");
     assert.match(html, /API &lt;test&gt;/);
     assert.ok(html.includes(`and its ${count} ${count === 1 ? "rule" : "rules"}?`));
-    assert.match(html, />Cancel<\/button>/);
-    assert.match(html, />Delete group<\/button>/);
+    assert.match(html, />\s*Cancel\s*<\/button>/);
+    assert.match(html, />\s*Delete group\s*<\/button>/);
   }
 });
 
@@ -484,7 +762,7 @@ test("ungrouped section is never faded as a dragged group when no group is being
   const module = { exports: {} };
   vm.runInNewContext(code, {
     module, exports: module.exports,
-    require: (name) => name === "vue" ? Vue : { default: {}, __esModule: true },
+    require: (name) => componentImports[name] ?? { default: {}, __esModule: true },
   });
   const group = { id: "g", name: "Group 1" };
   const props = {
@@ -498,7 +776,11 @@ test("ungrouped section is never faded as a dragged group when no group is being
     const html = await renderToString(Vue.createSSRApp(module.exports.default, props));
     return [...html.matchAll(/<section class="([^"]*)"/g)].map((match) => match[1]);
   };
-  assert.deepEqual(await sectionClasses(), ["rule-group", "rule-group"]);
+  const initial = await sectionClasses();
+  assert.equal(initial.length, 2);
+  assert.ok(initial.every((classes) => !classes.split(" ").includes("hc-dragging-group")));
   props.draggedGroupId = "g";
-  assert.deepEqual(await sectionClasses(), ["rule-group dragging-group", "rule-group"]);
+  const dragging = await sectionClasses();
+  assert.ok(dragging[0].split(" ").includes("hc-dragging-group"));
+  assert.ok(!dragging[1].split(" ").includes("hc-dragging-group"));
 });
