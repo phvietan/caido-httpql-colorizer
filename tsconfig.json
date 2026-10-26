@@ -14,5 +14,5 @@
       "shared": ["./packages/shared/src/index.ts"]
     }
   },
-  "include": ["packages/**/*.ts", "packages/**/*.vue", "caido.config.ts", "tailwind.config.ts"]
+  "include": ["packages/**/*.ts", "packages/**/*.vue", "caido.config.ts", "tailwind.config.ts", "vitest.config.ts"]
 }

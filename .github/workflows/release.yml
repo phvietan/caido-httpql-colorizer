@@ -1,26 +1,28 @@
 name: Release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
 
 jobs:
   release:
-    name: Build, sign, and publish
+    name: Test, build, sign, and publish
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Verify main branch
-        shell: bash
-        run: |
-          if [[ "${{ github.ref_name }}" != "main" ]]; then
-            echo "Release can only be run from the main branch."
-            exit 1
-          fi
-
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          # A queued run must include version commits made by the preceding release.
+          ref: main
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -34,8 +36,38 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Run unit tests
+        run: pnpm test
+
+      - name: Bump patch version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(node scripts/bump-version.mjs)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json caido.config.ts
+          git commit -m "chore: release $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Build plugin package
         run: pnpm run build
+
+      - name: Verify package version
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          test -s dist/plugin_package.zip
+          VERSION="$(unzip -p dist/plugin_package.zip manifest.json | jq -r .version)"
+          if [[ "$VERSION" != "$EXPECTED_VERSION" ]]; then
+            echo "Built manifest version $VERSION does not match $EXPECTED_VERSION."
+            exit 1
+          fi
 
       - name: Sign plugin package
         working-directory: dist
@@ -53,27 +85,17 @@ jobs:
           printf '%s\n' "$PRIVATE_KEY" > private_key.pem
           openssl pkeyutl -sign -inkey private_key.pem -out plugin_package.zip.sig -rawin -in plugin_package.zip
 
-      - name: Read package version
-        id: metadata
-        working-directory: dist
-        shell: bash
-        run: |
-          VERSION="$(unzip -p plugin_package.zip manifest.json | jq -r .version)"
-
-          if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
-            echo "Unable to read a version from the built manifest."
-            exit 1
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Push release version
+        # GITHUB_TOKEN pushes do not trigger another workflow run.
+        run: git push origin HEAD:main
 
       - name: Create immutable release
         uses: caido/action-release@v1
         with:
-          tag: ${{ steps.metadata.outputs.version }}
-          commit: ${{ github.sha }}
-          name: HTTPQL Colorizer ${{ steps.metadata.outputs.version }}
-          body: Release ${{ steps.metadata.outputs.version }}
+          tag: ${{ steps.version.outputs.version }}
+          commit: ${{ steps.version.outputs.commit }}
+          name: HTTPQL Colorizer ${{ steps.version.outputs.version }}
+          body: Release ${{ steps.version.outputs.version }}
           artifacts: dist/plugin_package.zip,dist/plugin_package.zip.sig
           artifactErrorsFailBuild: true
           immutableCreate: true

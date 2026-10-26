@@ -19,6 +19,7 @@
   },
   "packageManager": "pnpm@10.34.7",
   "scripts": {
+    "test": "vitest run",
     "build": "caido-dev build",
     "watch": "caido-dev watch",
     "typecheck": "tsc --noEmit"
@@ -33,6 +34,7 @@
     "tailwindcss": "3.4.13",
     "typescript": "latest",
     "vite": "6.0.7",
+    "vitest": "3.2.7",
     "vue": "latest"
   }
 }

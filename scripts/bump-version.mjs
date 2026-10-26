@@ -16,7 +16,9 @@ const packageVersion = packageJson.version;
 const configVersion = configMatch.slice(1).join(".");
 
 if (packageVersion !== configVersion) {
-  throw new Error(`Version mismatch: package.json=${packageVersion}, caido.config.ts=${configVersion}`);
+  throw new Error(
+    `Version mismatch: package.json=${packageVersion}, caido.config.ts=${configVersion}`,
+  );
 }
 
 const versionMatch = packageVersion.match(/^(\d+)\.(\d+)\.(\d+)$/);

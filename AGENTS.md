@@ -24,9 +24,11 @@ pnpm build
 
 The package is written to `dist/plugin_package.zip`.
 
+Run the TypeScript tests with `pnpm test`, or a single suite with `pnpm test tests/validation.test.ts`. Vitest loads TypeScript and Vue components directly using `vitest.config.ts`. Tests are split by concern under `tests/`, with shared fixtures and setup in `tests/helpers/`.
+
 ## Release process
 
-The [release workflow](.github/workflows/release.yml) builds the plugin, signs `dist/plugin_package.zip` with Ed25519, and publishes `plugin_package.zip` plus `plugin_package.zip.sig` in an immutable GitHub Release.
+Every push to `main` starts the [release workflow](.github/workflows/release.yml). It installs dependencies, runs `pnpm typecheck` and `pnpm test`, increments the patch version in `package.json` and `caido.config.ts`, builds and verifies the package, signs it with Ed25519, and pushes the version commit before publishing an immutable GitHub Release with `plugin_package.zip` and `plugin_package.zip.sig`. Failed checks stop the release.
 
 One-time repository setup:
 
@@ -34,14 +36,15 @@ One-time repository setup:
 2. Add the complete private PEM key as the GitHub Actions secret `PRIVATE_KEY`.
 3. Add the corresponding public key to the plugin's entry in Caido's `plugin_packages.json`.
 4. Enable GitHub **Immutable releases**.
+5. Allow GitHub Actions to push version commits to `main` (`contents: write` is set in the workflow; branch rules must also permit the bot).
 
-For a one-command release:
+To release, commit your changes and push `main`:
 
 ```bash
-./release.sh "feat: describe the next release"
+git push origin main
 ```
 
-The helper builds the current package, increments the patch version in `package.json` and `caido.config.ts`, rebuilds and verifies the manifest, commits the changes, pushes `main`, and starts the signed release workflow. It requires an authenticated GitHub CLI and the configured `PRIVATE_KEY` secret.
+Release runs are serialized. The version commit uses `GITHUB_TOKEN`, so it does not trigger another release. If `main` advances while a run is building, its version push fails instead of overwriting newer changes; the next queued run checks out the latest `main`. Pull the bot's version commit with `git pull --ff-only` before your next push. You can also start the workflow manually on `main` to publish another patch release.
 
 ## Project structure
 
